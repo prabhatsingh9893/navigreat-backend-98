@@ -35,6 +35,28 @@ const ContactSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now }
 });
 const Contact = mongoose.model('Contact', ContactSchema);
+// 1. BOOKING MODEL (बुकिंग का ढांचा)
+const BookingSchema = new mongoose.Schema({
+    studentEmail: String,
+    mentorName: String,
+    date: { type: Date, default: Date.now }
+});
+const Booking = mongoose.model('Booking', BookingSchema);
+
+// 2. BOOKING API (बुकिंग सेव करने का रास्ता)
+app.post('/api/book', async (req, res) => {
+    try {
+        const { studentEmail, mentorName } = req.body;
+        
+        // डेटाबेस में सेव करें
+        const newBooking = new Booking({ studentEmail, mentorName });
+        await newBooking.save();
+
+        res.json({ success: true, message: "Booking Confirmed!" });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
 
 // --- ROUTES ---
 
@@ -64,23 +86,73 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// ✅ LOGIN API
+// ✅ LOGIN API (Updated to send full profile)
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        // Check user
         const user = await User.findOne({ email });
         if (!user) return res.status(400).json({ success: false, message: "User not found!" });
 
-        // Check Password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ success: false, message: "Invalid Password!" });
 
-        // Generate Token
-        const token = jwt.sign({ id: user._id }, JWT_SECRET);
+        const token = jwt.sign({ id: user._id }, "supersecretkey123");
 
-        res.json({ success: true, token, username: user.username, message: "Login Successful!" });
+        // 👇 यहाँ बदलाव किया है: अब हम पूरा डेटा भेज रहे हैं
+        res.json({ 
+            success: true, 
+            token, 
+            user: { 
+                username: user.username, 
+                email: user.email, 
+                role: user.role, 
+                college: user.college, 
+                expertise: user.expertise 
+            }, 
+            message: "Login Successful!" 
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});// ✅ GOOGLE LOGIN API
+app.post('/api/google-login', async (req, res) => {
+    try {
+        const { username, email } = req.body;
+
+        // चेक करें कि क्या यूजर पहले से है?
+        let user = await User.findOne({ email });
+
+        if (!user) {
+            // अगर नहीं है, तो नया बनाओ (Random Password के साथ)
+            const randomPassword = Math.random().toString(36).slice(-8);
+            const hashedPassword = await bcrypt.hash(randomPassword, 10);
+
+            user = new User({ 
+                username, 
+                email, 
+                password: hashedPassword,
+                role: 'Student' // Default role
+            });
+            await user.save();
+        }
+
+        // टोकन जनरेट करें
+        const token = jwt.sign({ id: user._id }, "supersecretkey123");
+
+        res.json({ 
+            success: true, 
+            token, 
+            user: { 
+                username: user.username, 
+                email: user.email, 
+                role: user.role,
+                college: user.college,
+                expertise: user.expertise
+            }, 
+            message: "Google Login Successful!" 
+        });
+
     } catch (error) {
         res.status(500).json({ success: false, message: "Server Error" });
     }
