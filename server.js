@@ -181,3 +181,16 @@ app.get('/api/mentors', (req, res) => { res.json(MENTORS); });
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
+// --- 👇 NEW ROUTE: Get All Mentors 👇 ---
+app.get('/api/mentors', async (req, res) => {
+  try {
+    // Database mein dhundo jinka role "mentor" hai
+    // .select('-password') ka matlab: Password chhodkar baki sab details lao
+    const mentors = await User.find({ role: 'mentor' }).select('-password'); 
+    
+    res.json({ success: true, mentors });
+  } catch (error) {
+    console.error("Error fetching mentors:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
