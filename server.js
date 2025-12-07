@@ -5,10 +5,17 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken'); 
 
 const app = express();
-const PORT = 5000;
+
+// ✅ FIX 1: Dynamic Port (Render/Vercel ke liye zaroori hai)
+const PORT = process.env.PORT || 5000;
 const JWT_SECRET = "supersecretkey123"; 
 
-app.use(cors());
+// ✅ FIX 2: CORS Allows All Origins (Taaki Vercel se request fail na ho)
+app.use(cors({
+    origin: '*', 
+    credentials: true
+}));
+
 app.use(express.json());
 
 // --- DATABASE CONNECTION ---
@@ -18,20 +25,20 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected Successfully!"))
     .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// --- 1. USER MODEL (UPDATED for Role & College) ---
+// --- 1. USER MODEL ---
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true },
     email:    { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    
-    // 👇 Ye fields add ki gayi hain taaki Mentor data save ho sake
     role: { 
         type: String, 
         default: 'student', 
         enum: ['student', 'mentor'] 
     },
     college: { type: String, default: '' },
-    branch:  { type: String, default: '' }
+    branch:  { type: String, default: '' },
+    image:   { type: String, default: '' }, // Image field added
+    about:   { type: String, default: '' }  // About field added
 }, { timestamps: true });
 
 const User = mongoose.model('User', UserSchema);
@@ -57,14 +64,13 @@ const Booking = mongoose.model('Booking', BookingSchema);
 // ================= ROUTES =================
 
 app.get('/', (req, res) => {
-    res.send('EduMentor Backend with Auth is Running! 🚀');
+    res.send('EduMentor Backend is Running! 🚀');
 });
 
-// ✅ REGISTER API (UPDATED to save Role)
+// ✅ REGISTER API
 app.post('/api/register', async (req, res) => {
     try {
-        // 👇 Role, College, Branch receive kar rahe hain
-        const { username, email, password, role, college, branch } = req.body;
+        const { username, email, password, role, college, branch, image, about } = req.body;
 
         // Check user
         const existingUser = await User.findOne({ email });
@@ -73,19 +79,20 @@ app.post('/api/register', async (req, res) => {
         // Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Save User (With Role)
+        // Save User
         const newUser = new User({ 
             username, 
             email, 
             password: hashedPassword,
-            role: role || 'student', // Default student
+            role: role || 'student',
             college: college || '',
-            branch: branch || ''
+            branch: branch || '',
+            image: image || '',
+            about: about || ''
         });
         
         await newUser.save();
 
-        // Auto-Login Token Generate (Optional but good)
         const token = jwt.sign({ id: newUser._id }, JWT_SECRET);
 
         res.json({ 
@@ -117,11 +124,13 @@ app.post('/api/login', async (req, res) => {
             success: true, 
             token, 
             user: { 
+                id: user._id, // ID bhejna zaroori hai frontend ke liye
                 username: user.username, 
                 email: user.email, 
                 role: user.role, 
                 college: user.college, 
-                branch: user.branch 
+                branch: user.branch,
+                image: user.image
             }, 
             message: "Login Successful!" 
         });
@@ -133,7 +142,7 @@ app.post('/api/login', async (req, res) => {
 // ✅ GOOGLE LOGIN API
 app.post('/api/google-login', async (req, res) => {
     try {
-        const { username, email } = req.body;
+        const { username, email, image } = req.body;
         let user = await User.findOne({ email });
 
         if (!user) {
@@ -144,7 +153,8 @@ app.post('/api/google-login', async (req, res) => {
                 username, 
                 email, 
                 password: hashedPassword,
-                role: 'student' 
+                role: 'student',
+                image: image || ''
             });
             await user.save();
         }
@@ -155,11 +165,13 @@ app.post('/api/google-login', async (req, res) => {
             success: true, 
             token, 
             user: { 
+                id: user._id,
                 username: user.username, 
                 email: user.email, 
-                role: user.role,
-                college: user.college,
-                branch: user.branch
+                role: user.role, 
+                college: user.college, 
+                branch: user.branch,
+                image: user.image
             }, 
             message: "Google Login Successful!" 
         });
@@ -169,8 +181,7 @@ app.post('/api/google-login', async (req, res) => {
     }
 });
 
-// ✅ GET ALL MENTORS (Real Database Route)
-// Ye hardcoded list ko hata kar database se fetch karega
+// ✅ GET ALL MENTORS
 app.get('/api/mentors', async (req, res) => {
   try {
     const mentors = await User.find({ role: 'mentor' }).select('-password'); 
@@ -179,6 +190,27 @@ app.get('/api/mentors', async (req, res) => {
     console.error("Error fetching mentors:", error);
     res.status(500).json({ success: false, message: "Server Error" });
   }
+});
+
+// ✅ GET SINGLE MENTOR (Profile Page ke liye)
+app.get('/api/mentors/:id', async (req, res) => {
+    try {
+        const mentor = await User.findById(req.params.id).select('-password');
+        if (!mentor) return res.status(404).json({ success: false, message: "Mentor not found" });
+        res.json({ success: true, mentor });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
+// ✅ UPDATE PROFILE (Mentor Edit ke liye)
+app.put('/api/mentors/:id', async (req, res) => {
+    try {
+        const updatedUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password');
+        res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Update Failed" });
+    }
 });
 
 // BOOKING API
@@ -207,5 +239,5 @@ app.post('/api/contact', async (req, res) => {
 
 // --- SERVER START ---
 app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Server is running on Port: ${PORT}`);
 });
