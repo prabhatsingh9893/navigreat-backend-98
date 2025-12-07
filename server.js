@@ -1,30 +1,39 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs'); // <--- New for Security
-const jwt = require('jsonwebtoken'); // <--- New for Login Token
+const bcrypt = require('bcryptjs'); 
+const jwt = require('jsonwebtoken'); 
 
 const app = express();
 const PORT = 5000;
-const JWT_SECRET = "supersecretkey123"; // (In real app, hide this)
+const JWT_SECRET = "supersecretkey123"; 
 
 app.use(cors());
 app.use(express.json());
 
 // --- DATABASE CONNECTION ---
-// 👇 PASTE YOUR MONGODB LINK HERE 👇
 const MONGO_URI = "mongodb+srv://prabhatsingh9893:Niharika79@cluster0.zfnasif.mongodb.net/?appName=Cluster0"; 
 
 mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected Successfully!"))
     .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// --- 1. USER MODEL (For Login/Signup) ---
+// --- 1. USER MODEL (UPDATED for Role & College) ---
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true }
-});
+    email:    { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    
+    // 👇 Ye fields add ki gayi hain taaki Mentor data save ho sake
+    role: { 
+        type: String, 
+        default: 'student', 
+        enum: ['student', 'mentor'] 
+    },
+    college: { type: String, default: '' },
+    branch:  { type: String, default: '' }
+}, { timestamps: true });
+
 const User = mongoose.model('User', UserSchema);
 
 // --- 2. CONTACT MODEL ---
@@ -35,7 +44,8 @@ const ContactSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now }
 });
 const Contact = mongoose.model('Contact', ContactSchema);
-// 1. BOOKING MODEL (बुकिंग का ढांचा)
+
+// --- 3. BOOKING MODEL ---
 const BookingSchema = new mongoose.Schema({
     studentEmail: String,
     mentorName: String,
@@ -43,50 +53,54 @@ const BookingSchema = new mongoose.Schema({
 });
 const Booking = mongoose.model('Booking', BookingSchema);
 
-// 2. BOOKING API (बुकिंग सेव करने का रास्ता)
-app.post('/api/book', async (req, res) => {
-    try {
-        const { studentEmail, mentorName } = req.body;
-        
-        // डेटाबेस में सेव करें
-        const newBooking = new Booking({ studentEmail, mentorName });
-        await newBooking.save();
 
-        res.json({ success: true, message: "Booking Confirmed!" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
-});
-
-// --- ROUTES ---
+// ================= ROUTES =================
 
 app.get('/', (req, res) => {
     res.send('EduMentor Backend with Auth is Running! 🚀');
 });
 
-// ✅ REGISTER API (Sign Up)
+// ✅ REGISTER API (UPDATED to save Role)
 app.post('/api/register', async (req, res) => {
     try {
-        const { username, email, password } = req.body;
+        // 👇 Role, College, Branch receive kar rahe hain
+        const { username, email, password, role, college, branch } = req.body;
 
-        // Check if user already exists
+        // Check user
         const existingUser = await User.findOne({ email });
         if (existingUser) return res.status(400).json({ success: false, message: "User already exists!" });
 
-        // Encrypt Password
+        // Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Save User
-        const newUser = new User({ username, email, password: hashedPassword });
+        // Save User (With Role)
+        const newUser = new User({ 
+            username, 
+            email, 
+            password: hashedPassword,
+            role: role || 'student', // Default student
+            college: college || '',
+            branch: branch || ''
+        });
+        
         await newUser.save();
 
-        res.json({ success: true, message: "Registration Successful! Please Login." });
+        // Auto-Login Token Generate (Optional but good)
+        const token = jwt.sign({ id: newUser._id }, JWT_SECRET);
+
+        res.json({ 
+            success: true, 
+            message: "Registration Successful!", 
+            token, 
+            user: newUser 
+        });
     } catch (error) {
+        console.error("Register Error:", error);
         res.status(500).json({ success: false, message: "Server Error" });
     }
 });
 
-// ✅ LOGIN API (Updated to send full profile)
+// ✅ LOGIN API
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
@@ -97,9 +111,8 @@ app.post('/api/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ success: false, message: "Invalid Password!" });
 
-        const token = jwt.sign({ id: user._id }, "supersecretkey123");
+        const token = jwt.sign({ id: user._id }, JWT_SECRET);
 
-        // 👇 यहाँ बदलाव किया है: अब हम पूरा डेटा भेज रहे हैं
         res.json({ 
             success: true, 
             token, 
@@ -108,23 +121,22 @@ app.post('/api/login', async (req, res) => {
                 email: user.email, 
                 role: user.role, 
                 college: user.college, 
-                expertise: user.expertise 
+                branch: user.branch 
             }, 
             message: "Login Successful!" 
         });
     } catch (error) {
         res.status(500).json({ success: false, message: "Server Error" });
     }
-});// ✅ GOOGLE LOGIN API
+});
+
+// ✅ GOOGLE LOGIN API
 app.post('/api/google-login', async (req, res) => {
     try {
         const { username, email } = req.body;
-
-        // चेक करें कि क्या यूजर पहले से है?
         let user = await User.findOne({ email });
 
         if (!user) {
-            // अगर नहीं है, तो नया बनाओ (Random Password के साथ)
             const randomPassword = Math.random().toString(36).slice(-8);
             const hashedPassword = await bcrypt.hash(randomPassword, 10);
 
@@ -132,13 +144,12 @@ app.post('/api/google-login', async (req, res) => {
                 username, 
                 email, 
                 password: hashedPassword,
-                role: 'Student' // Default role
+                role: 'student' 
             });
             await user.save();
         }
 
-        // टोकन जनरेट करें
-        const token = jwt.sign({ id: user._id }, "supersecretkey123");
+        const token = jwt.sign({ id: user._id }, JWT_SECRET);
 
         res.json({ 
             success: true, 
@@ -148,11 +159,35 @@ app.post('/api/google-login', async (req, res) => {
                 email: user.email, 
                 role: user.role,
                 college: user.college,
-                expertise: user.expertise
+                branch: user.branch
             }, 
             message: "Google Login Successful!" 
         });
 
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
+// ✅ GET ALL MENTORS (Real Database Route)
+// Ye hardcoded list ko hata kar database se fetch karega
+app.get('/api/mentors', async (req, res) => {
+  try {
+    const mentors = await User.find({ role: 'mentor' }).select('-password'); 
+    res.json({ success: true, mentors });
+  } catch (error) {
+    console.error("Error fetching mentors:", error);
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+});
+
+// BOOKING API
+app.post('/api/book', async (req, res) => {
+    try {
+        const { studentEmail, mentorName } = req.body;
+        const newBooking = new Booking({ studentEmail, mentorName });
+        await newBooking.save();
+        res.json({ success: true, message: "Booking Confirmed!" });
     } catch (error) {
         res.status(500).json({ success: false, message: "Server Error" });
     }
@@ -170,27 +205,7 @@ app.post('/api/contact', async (req, res) => {
     }
 });
 
-// MENTORS API (Still hardcoded for now)
-const MENTORS = [
-    { id: 1, name: "Prabhat Singh", college: "IIT Bombay", role: "CS Graduate", image: "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=500&q=80" },
-    { id: 2, name: "Priya Sharma", college: "NIT Trichy", role: "ECE Graduate", image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=500&q=80" },
-    { id: 3, name: "Amit Patel", college: "Stanford University", role: "MS CS", image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=500&q=80" }
-];
-app.get('/api/mentors', (req, res) => { res.json(MENTORS); });
-
+// --- SERVER START ---
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
-});
-// --- 👇 NEW ROUTE: Get All Mentors 👇 ---
-app.get('/api/mentors', async (req, res) => {
-  try {
-    // Database mein dhundo jinka role "mentor" hai
-    // .select('-password') ka matlab: Password chhodkar baki sab details lao
-    const mentors = await User.find({ role: 'mentor' }).select('-password'); 
-    
-    res.json({ success: true, mentors });
-  } catch (error) {
-    console.error("Error fetching mentors:", error);
-    res.status(500).json({ success: false, message: "Server Error" });
-  }
 });
