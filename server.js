@@ -6,11 +6,11 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// ✅ FIX 1: Dynamic Port (Render/Vercel ke liye zaroori hai)
+// ✅ FIX 1: Dynamic Port
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = "supersecretkey123"; 
 
-// ✅ FIX 2: CORS Allows All Origins (Taaki Vercel se request fail na ho)
+// ✅ FIX 2: CORS Allows All Origins
 app.use(cors({
     origin: '*', 
     credentials: true
@@ -37,8 +37,8 @@ const UserSchema = new mongoose.Schema({
     },
     college: { type: String, default: '' },
     branch:  { type: String, default: '' },
-    image:   { type: String, default: '' }, // Image field added
-    about:   { type: String, default: '' }  // About field added
+    image:   { type: String, default: '' }, 
+    about:   { type: String, default: '' } 
 }, { timestamps: true });
 
 const User = mongoose.model('User', UserSchema);
@@ -60,6 +60,15 @@ const BookingSchema = new mongoose.Schema({
 });
 const Booking = mongoose.model('Booking', BookingSchema);
 
+// --- 4. LECTURE MODEL (New: Jo missing tha) ---
+const LectureSchema = new mongoose.Schema({
+    mentorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    title: { type: String, required: true },
+    url: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+});
+const Lecture = mongoose.model('Lecture', LectureSchema);
+
 
 // ================= ROUTES =================
 
@@ -72,14 +81,11 @@ app.post('/api/register', async (req, res) => {
     try {
         const { username, email, password, role, college, branch, image, about } = req.body;
 
-        // Check user
         const existingUser = await User.findOne({ email });
         if (existingUser) return res.status(400).json({ success: false, message: "User already exists!" });
 
-        // Hash Password
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Save User
         const newUser = new User({ 
             username, 
             email, 
@@ -124,7 +130,7 @@ app.post('/api/login', async (req, res) => {
             success: true, 
             token, 
             user: { 
-                id: user._id, // ID bhejna zaroori hai frontend ke liye
+                id: user._id, 
                 username: user.username, 
                 email: user.email, 
                 role: user.role, 
@@ -195,6 +201,9 @@ app.get('/api/mentors', async (req, res) => {
 // ✅ GET SINGLE MENTOR (Profile Page ke liye)
 app.get('/api/mentors/:id', async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(400).json({ success: false, message: "Invalid ID" });
+        }
         const mentor = await User.findById(req.params.id).select('-password');
         if (!mentor) return res.status(404).json({ success: false, message: "Mentor not found" });
         res.json({ success: true, mentor });
@@ -210,6 +219,28 @@ app.put('/api/mentors/:id', async (req, res) => {
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
     } catch (error) {
         res.status(500).json({ success: false, message: "Update Failed" });
+    }
+});
+
+// ✅ ADD LECTURE API (New: Video Upload)
+app.post('/api/lectures', async (req, res) => {
+    try {
+        const { mentorId, title, url } = req.body;
+        const newLecture = new Lecture({ mentorId, title, url });
+        await newLecture.save();
+        res.json({ success: true, message: "Lecture Added!" });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Error saving lecture" });
+    }
+});
+
+// ✅ GET LECTURES API (New: Fetch Videos for Profile)
+app.get('/api/lectures/:mentorId', async (req, res) => {
+    try {
+        const lectures = await Lecture.find({ mentorId: req.params.mentorId });
+        res.json({ success: true, lectures });
+    } catch (error) {
+        res.status(500).json({ success: false, message: "Error fetching lectures" });
     }
 });
 
