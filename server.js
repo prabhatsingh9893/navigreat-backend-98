@@ -10,13 +10,15 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = "supersecretkey123"; 
 
-// ✅ FIX 2: CORS Allows All Origins
+// ✅ FIX 2: CORS Setup
 app.use(cors({
     origin: '*', 
     credentials: true
 }));
 
-app.use(express.json());
+// ✅ FIX 3: IMAGE UPLOAD LIMIT INCREASED (Ye update karna zaroori tha)
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // --- DATABASE CONNECTION ---
 const MONGO_URI = "mongodb+srv://prabhatsingh9893:Niharika79@cluster0.zfnasif.mongodb.net/?appName=Cluster0"; 
@@ -60,7 +62,7 @@ const BookingSchema = new mongoose.Schema({
 });
 const Booking = mongoose.model('Booking', BookingSchema);
 
-// --- 4. LECTURE MODEL (New: Jo missing tha) ---
+// --- 4. LECTURE MODEL (Ye Missing tha, isliye add kiya) ---
 const LectureSchema = new mongoose.Schema({
     mentorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
@@ -222,7 +224,7 @@ app.put('/api/mentors/:id', async (req, res) => {
     }
 });
 
-// ✅ ADD LECTURE API (New: Video Upload)
+// ✅ ADD LECTURE API
 app.post('/api/lectures', async (req, res) => {
     try {
         const { mentorId, title, url } = req.body;
@@ -234,7 +236,7 @@ app.post('/api/lectures', async (req, res) => {
     }
 });
 
-// ✅ GET LECTURES API (New: Fetch Videos for Profile)
+// ✅ GET LECTURES API
 app.get('/api/lectures/:mentorId', async (req, res) => {
     try {
         const lectures = await Lecture.find({ mentorId: req.params.mentorId });
