@@ -12,10 +12,12 @@ const JWT_SECRET = "supersecretkey123";
 
 // ✅ FIX 2: CORS Setup
 app.use(cors({
-    origin: '*', 
+    origin: [
+        "http://localhost:5173",                 // Local testing ke liye
+        "https://navigreat-frontend-98.vercel.app" // Live website ke liye
+    ],
     credentials: true
 }));
-
 // ✅ FIX 3: IMAGE UPLOAD LIMIT INCREASED (Ye update karna zaroori tha)
 app.use(express.json({ limit: '50mb' })); 
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
