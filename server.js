@@ -1,278 +1,235 @@
+require('dotenv').config(); // 🔐 Secure Variables Load
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs'); 
-const jwt = require('jsonwebtoken'); 
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const KJUR = require('jsrsasign'); // 🎥 Zoom ke liye
 
 const app = express();
-
-// ✅ FIX 1: Dynamic Port
 const PORT = process.env.PORT || 5000;
-const JWT_SECRET = "supersecretkey123"; 
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// ✅ FIX 2: CORS Setup
+// ================= IMPORTS =================
+// Note: Baki models inline hain, par Session humne alag file me rakha hai
+const Session = require('./models/Session');
+const sessionRoutes = require('./routes/sessions'); // 👈 Sessions Route Import
+
+// ================= MIDDLEWARE =================
 app.use(cors({
     origin: [
-        "http://localhost:5173",                 // Local testing ke liye
-        "https://navigreat-frontend-98.vercel.app" // Live website ke liye
+        "http://localhost:5173",
+        "https://navigreat-frontend-98.vercel.app"
     ],
     credentials: true
 }));
-// ✅ FIX 3: IMAGE UPLOAD LIMIT INCREASED (Ye update karna zaroori tha)
-app.use(express.json({ limit: '50mb' })); 
+
+app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// --- DATABASE CONNECTION ---
-const MONGO_URI = "mongodb+srv://prabhatsingh9893:Niharika79@cluster0.zfnasif.mongodb.net/?appName=Cluster0"; 
+// 🛡️ AUTH MIDDLEWARE (Suraksha Kavach)
+const verifyToken = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(401).json({ success: false, message: "Access Denied" });
 
-mongoose.connect(MONGO_URI)
+    try {
+        const verified = jwt.verify(token.replace("Bearer ", ""), JWT_SECRET);
+        req.user = verified;
+        next();
+    } catch (err) {
+        res.status(400).json({ success: false, message: "Invalid Token" });
+    }
+};
+
+// ================= DATABASE CONNECTION =================
+mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected Successfully!"))
     .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// --- 1. USER MODEL ---
+// ================= INLINE MODELS (Existing) =================
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true },
-    email:    { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    role: { 
-        type: String, 
-        default: 'student', 
-        enum: ['student', 'mentor'] 
-    },
+    role: { type: String, default: 'student', enum: ['student', 'mentor'] },
     college: { type: String, default: '' },
-    branch:  { type: String, default: '' },
-    image:   { type: String, default: '' }, 
-    about:   { type: String, default: '' } 
+    branch: { type: String, default: '' },
+    image: { type: String, default: '' },
+    about: { type: String, default: '' }
 }, { timestamps: true });
+const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
-const User = mongoose.model('User', UserSchema);
+const ContactSchema = new mongoose.Schema({ name: String, email: String, message: String, date: { type: Date, default: Date.now } });
+const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 
-// --- 2. CONTACT MODEL ---
-const ContactSchema = new mongoose.Schema({
-    name: String,
-    email: String,
-    message: String,
-    date: { type: Date, default: Date.now }
-});
-const Contact = mongoose.model('Contact', ContactSchema);
+const BookingSchema = new mongoose.Schema({ studentEmail: String, mentorName: String, date: { type: Date, default: Date.now } });
+const Booking = mongoose.models.Booking || mongoose.model('Booking', BookingSchema);
 
-// --- 3. BOOKING MODEL ---
-const BookingSchema = new mongoose.Schema({
-    studentEmail: String,
-    mentorName: String,
-    date: { type: Date, default: Date.now }
-});
-const Booking = mongoose.model('Booking', BookingSchema);
-
-// --- 4. LECTURE MODEL (Ye Missing tha, isliye add kiya) ---
 const LectureSchema = new mongoose.Schema({
     mentorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
     url: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
 });
-const Lecture = mongoose.model('Lecture', LectureSchema);
+const Lecture = mongoose.models.Lecture || mongoose.model('Lecture', LectureSchema);
 
 
-// ================= ROUTES =================
+// ================= ROUTES CONFIGURATION =================
+// 👇 Isse /api/sessions activate ho jayega (routes/sessions.js file use hogi)
+app.use('/api/sessions', sessionRoutes);
 
-app.get('/', (req, res) => {
-    res.send('EduMentor Backend is Running! 🚀');
+
+// ================= API ROUTES =================
+
+app.get('/', (req, res) => { res.send('NaviGreat Backend is Running! 🚀'); });
+
+// 🎥 ZOOM SIGNATURE API
+app.post('/api/generate-signature', (req, res) => {
+    const iat = Math.round(new Date().getTime() / 1000) - 30;
+    const exp = iat + 60 * 60 * 2; // 2 Hours
+
+    const oHeader = { alg: 'HS256', typ: 'JWT' };
+    const oPayload = {
+        sdkKey: process.env.ZOOM_CLIENT_ID,
+        mn: req.body.meetingNumber,
+        role: req.body.role,
+        iat: iat,
+        exp: exp,
+        appKey: process.env.ZOOM_CLIENT_ID,
+        tokenExp: exp
+    };
+
+    const sHeader = JSON.stringify(oHeader);
+    const sPayload = JSON.stringify(oPayload);
+    const signature = KJUR.jws.JWS.sign('HS256', sHeader, sPayload, process.env.ZOOM_CLIENT_SECRET);
+
+    res.json({ signature, sdkKey: process.env.ZOOM_CLIENT_ID });
 });
 
-// ✅ REGISTER API
+// 1. REGISTER
 app.post('/api/register', async (req, res) => {
     try {
         const { username, email, password, role, college, branch, image, about } = req.body;
-
         const existingUser = await User.findOne({ email });
-        if (existingUser) return res.status(400).json({ success: false, message: "User already exists!" });
+        if (existingUser) return res.status(400).json({ success: false, message: "❌ User already exists!" });
 
         const hashedPassword = await bcrypt.hash(password, 10);
+        const newUser = new User({ username, email, password: hashedPassword, role: role || 'student', college, branch, image, about });
 
-        const newUser = new User({ 
-            username, 
-            email, 
-            password: hashedPassword,
-            role: role || 'student',
-            college: college || '',
-            branch: branch || '',
-            image: image || '',
-            about: about || ''
-        });
-        
         await newUser.save();
-
         const token = jwt.sign({ id: newUser._id }, JWT_SECRET);
-
-        res.json({ 
-            success: true, 
-            message: "Registration Successful!", 
-            token, 
-            user: newUser 
-        });
-    } catch (error) {
-        console.error("Register Error:", error);
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+        res.json({ success: true, message: "Registration Successful!", token, user: newUser });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// ✅ LOGIN API
+// 2. LOGIN
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-
         const user = await User.findOne({ email });
-        if (!user) return res.status(400).json({ success: false, message: "User not found!" });
+        if (!user) return res.status(400).json({ success: false, message: "❌ User not found!" });
 
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).json({ success: false, message: "Invalid Password!" });
+        if (!isMatch) return res.status(400).json({ success: false, message: "❌ Invalid Password!" });
 
         const token = jwt.sign({ id: user._id }, JWT_SECRET);
-
-        res.json({ 
-            success: true, 
-            token, 
-            user: { 
-                id: user._id, 
-                username: user.username, 
-                email: user.email, 
-                role: user.role, 
-                college: user.college, 
-                branch: user.branch,
-                image: user.image
-            }, 
-            message: "Login Successful!" 
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+        res.json({ success: true, token, user: { ...user._doc }, message: "Login Successful!" });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// ✅ GOOGLE LOGIN API
+// 3. GOOGLE LOGIN
 app.post('/api/google-login', async (req, res) => {
     try {
         const { username, email, image } = req.body;
         let user = await User.findOne({ email });
-
         if (!user) {
-            const randomPassword = Math.random().toString(36).slice(-8);
-            const hashedPassword = await bcrypt.hash(randomPassword, 10);
-
-            user = new User({ 
-                username, 
-                email, 
-                password: hashedPassword,
-                role: 'student',
-                image: image || ''
-            });
+            const hashedPassword = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
+            user = new User({ username, email, password: hashedPassword, role: 'student', image: image || '' });
             await user.save();
         }
-
         const token = jwt.sign({ id: user._id }, JWT_SECRET);
-
-        res.json({ 
-            success: true, 
-            token, 
-            user: { 
-                id: user._id,
-                username: user.username, 
-                email: user.email, 
-                role: user.role, 
-                college: user.college, 
-                branch: user.branch,
-                image: user.image
-            }, 
-            message: "Google Login Successful!" 
-        });
-
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+        res.json({ success: true, token, user: { ...user._doc }, message: "Google Login Successful!" });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// ✅ GET ALL MENTORS
+// 4. GET ALL MENTORS
 app.get('/api/mentors', async (req, res) => {
-  try {
-    const mentors = await User.find({ role: 'mentor' }).select('-password'); 
-    res.json({ success: true, mentors });
-  } catch (error) {
-    console.error("Error fetching mentors:", error);
-    res.status(500).json({ success: false, message: "Server Error" });
-  }
+    try {
+        const mentors = await User.find({ role: 'mentor' }).select('-password');
+        res.json({ success: true, mentors });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// ✅ GET SINGLE MENTOR (Profile Page ke liye)
+// 5. GET SINGLE MENTOR
 app.get('/api/mentors/:id', async (req, res) => {
     try {
-        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-            return res.status(400).json({ success: false, message: "Invalid ID" });
-        }
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid ID" });
         const mentor = await User.findById(req.params.id).select('-password');
         if (!mentor) return res.status(404).json({ success: false, message: "Mentor not found" });
         res.json({ success: true, mentor });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// ✅ UPDATE PROFILE (Mentor Edit ke liye)
-app.put('/api/mentors/:id', async (req, res) => {
+// 6. UPDATE PROFILE (Protected 🔒)
+app.put('/api/mentors/:id', verifyToken, async (req, res) => {
     try {
         const updatedUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password');
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Update Failed" });
-    }
+    } catch (error) { res.status(500).json({ success: false, message: "Update Failed" }); }
 });
 
-// ✅ ADD LECTURE API
-app.post('/api/lectures', async (req, res) => {
+// 7. ADD LECTURE (Protected 🔒)
+app.post('/api/lectures', verifyToken, async (req, res) => {
     try {
         const { mentorId, title, url } = req.body;
         const newLecture = new Lecture({ mentorId, title, url });
         await newLecture.save();
-        res.json({ success: true, message: "Lecture Added!" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Error saving lecture" });
-    }
+        res.json({ success: true, message: "Lecture Added!", lecture: newLecture });
+    } catch (error) { res.status(500).json({ success: false, message: "Error saving lecture" }); }
 });
 
-// ✅ GET LECTURES API
+// 8. DELETE LECTURE (Protected 🔒)
+app.delete('/api/lectures/:id', verifyToken, async (req, res) => {
+    try {
+        await Lecture.findByIdAndDelete(req.params.id);
+        res.json({ success: true, message: "Lecture Deleted Successfully" });
+    } catch (error) { res.status(500).json({ success: false, message: "Error deleting lecture" }); }
+});
+
+// 9. GET LECTURES
 app.get('/api/lectures/:mentorId', async (req, res) => {
     try {
         const lectures = await Lecture.find({ mentorId: req.params.mentorId });
         res.json({ success: true, lectures });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Error fetching lectures" });
-    }
+    } catch (error) { res.status(500).json({ success: false, message: "Error fetching lectures" }); }
 });
 
-// BOOKING API
+// 10. BOOKING
 app.post('/api/book', async (req, res) => {
     try {
         const { studentEmail, mentorName } = req.body;
         const newBooking = new Booking({ studentEmail, mentorName });
         await newBooking.save();
         res.json({ success: true, message: "Booking Confirmed!" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// CONTACT API
+// 11. CONTACT
 app.post('/api/contact', async (req, res) => {
     try {
         const { name, email, message } = req.body;
         const newMessage = new Contact({ name, email, message });
         await newMessage.save();
         res.json({ success: true, message: "Saved to Database!" });
-    } catch (error) {
-        res.status(500).json({ success: false, message: "Server Error" });
-    }
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
-// --- SERVER START ---
+// 404 Handler (Should be the last middleware)
+app.use((req, res) => {
+    res.status(404).json({ success: false, message: "⚠️ Endpoint not found (Check URL or Restart Server)" });
+});
+
+// Server Start
 app.listen(PORT, () => {
-    console.log(`Server is running on Port: ${PORT}`);
+    console.log(`🚀 Server running on Port: ${PORT}`);
 });
