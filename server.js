@@ -1,4 +1,4 @@
-require('dotenv').config(); // 🔐 Secure Variables Load
+require('dotenv').config({ override: true }); // 🔐 Secure Variables Load (Force File Override)
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -16,6 +16,11 @@ const Session = require('./models/Session');
 const sessionRoutes = require('./routes/sessions'); // 👈 Sessions Route Import
 
 // ================= MIDDLEWARE =================
+app.use((req, res, next) => {
+    console.log(`[REQUEST] ${req.method} ${req.url}`);
+    next();
+});
+
 app.use(cors({
     origin: [
         "http://localhost:5173",
@@ -91,13 +96,20 @@ app.post('/api/generate-signature', (req, res) => {
     const oHeader = { alg: 'HS256', typ: 'JWT' };
     const oPayload = {
         sdkKey: process.env.ZOOM_CLIENT_ID,
-        mn: req.body.meetingNumber,
-        role: req.body.role,
+        mn: req.body.meetingNumber, // Keep as string for compatibility with some versions, or parseInt if needed. 
+        role: parseInt(req.body.role, 10), // Role must be int
         iat: iat,
         exp: exp,
-        appKey: process.env.ZOOM_CLIENT_ID,
+        appKey: process.env.ZOOM_CLIENT_ID, // Deprecated but often required for backward compat
         tokenExp: exp
     };
+
+    // Debug Log (Remove in production)
+    console.log("Generating Signature for:", {
+        mn: oPayload.mn,
+        role: oPayload.role,
+        sdkKeyPrefix: oPayload.sdkKey.substring(0, 4)
+    });
 
     const sHeader = JSON.stringify(oHeader);
     const sPayload = JSON.stringify(oPayload);
