@@ -60,7 +60,9 @@ const UserSchema = new mongoose.Schema({
     college: { type: String, default: '' },
     branch: { type: String, default: '' },
     image: { type: String, default: '' },
-    about: { type: String, default: '' }
+    about: { type: String, default: '' },
+    meetingId: { type: String, default: '' }, // ✅ Added for Zoom
+    passcode: { type: String, default: '' }   // ✅ Added for Zoom
 }, { timestamps: true });
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
