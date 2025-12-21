@@ -237,8 +237,18 @@ app.post('/api/contact', async (req, res) => {
 });
 
 // 404 Handler (Should be the last middleware)
-app.use((req, res) => {
-    res.status(404).json({ success: false, message: "⚠️ Endpoint not found (Check URL or Restart Server)" });
+app.get('/api/zoom/callback', (req, res) => {
+    const { code } = req.query;
+    console.log("Zoom Auth Code Received:", code);
+    res.send(`
+        <div style="display:flex; justify-content:center; align-items:center; height:100vh; font-family:sans-serif;">
+            <div style="text-align:center; padding:40px; border-radius:10px; background:#f0fdf4; color:#166534;">
+                <h1>✅ App Authorized!</h1>
+                <p>Navigreat has been linked to Zoom successfully.</p>
+                <p>You can close this tab now.</p>
+            </div>
+        </div>
+    `);
 });
 
 // Server Start
