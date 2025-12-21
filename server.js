@@ -86,7 +86,10 @@ app.use('/api/sessions', sessionRoutes);
 
 // ================= API ROUTES =================
 
-app.get('/', (req, res) => { res.send('NaviGreat Backend is Running! 🚀'); });
+app.get('/', (req, res) => {
+    const dbStatus = ['Disconnected', 'Connected', 'Connecting', 'Disconnecting'][mongoose.connection.readyState];
+    res.send(`NaviGreat Backend is Running! 🚀 | MongoDB Status: ${dbStatus}`);
+});
 
 // 🎥 ZOOM SIGNATURE API
 app.post('/api/generate-signature', (req, res) => {
