@@ -92,33 +92,37 @@ app.get('/', (req, res) => {
 });
 
 // 🎥 ZOOM SIGNATURE API
+// 🎥 ZOOM SIGNATURE API
 app.post('/api/generate-signature', (req, res) => {
-    const iat = Math.round(new Date().getTime() / 1000) - 30;
-    const exp = iat + 60 * 60 * 2; // 2 Hours
+    try {
+        if (!process.env.ZOOM_CLIENT_ID || !process.env.ZOOM_CLIENT_SECRET) {
+            console.error("❌ Missing Zoom Env Vars");
+            return res.status(500).json({ success: false, message: "Server Error: Zoom Keys Missing" });
+        }
 
-    const oHeader = { alg: 'HS256', typ: 'JWT' };
-    const oPayload = {
-        sdkKey: process.env.ZOOM_CLIENT_ID,
-        mn: req.body.meetingNumber, // Keep as string for compatibility with some versions, or parseInt if needed. 
-        role: parseInt(req.body.role, 10), // Role must be int
-        iat: iat,
-        exp: exp,
-        appKey: process.env.ZOOM_CLIENT_ID, // Deprecated but often required for backward compat
-        tokenExp: exp
-    };
+        const iat = Math.round(new Date().getTime() / 1000) - 30;
+        const exp = iat + 60 * 60 * 2; // 2 Hours
 
-    // Debug Log (Remove in production)
-    console.log("Generating Signature for:", {
-        mn: oPayload.mn,
-        role: oPayload.role,
-        sdkKeyPrefix: oPayload.sdkKey.substring(0, 4)
-    });
+        const oHeader = { alg: 'HS256', typ: 'JWT' };
+        const oPayload = {
+            sdkKey: process.env.ZOOM_CLIENT_ID,
+            mn: req.body.meetingNumber,
+            role: parseInt(req.body.role, 10),
+            iat: iat,
+            exp: exp,
+            appKey: process.env.ZOOM_CLIENT_ID,
+            tokenExp: exp
+        };
 
-    const sHeader = JSON.stringify(oHeader);
-    const sPayload = JSON.stringify(oPayload);
-    const signature = KJUR.jws.JWS.sign('HS256', sHeader, sPayload, process.env.ZOOM_CLIENT_SECRET);
+        const sHeader = JSON.stringify(oHeader);
+        const sPayload = JSON.stringify(oPayload);
+        const signature = KJUR.jws.JWS.sign('HS256', sHeader, sPayload, process.env.ZOOM_CLIENT_SECRET);
 
-    res.json({ signature, sdkKey: process.env.ZOOM_CLIENT_ID });
+        res.json({ signature, sdkKey: process.env.ZOOM_CLIENT_ID });
+    } catch (err) {
+        console.error("Signature Gen Error:", err);
+        res.status(500).json({ success: false, message: "Signature Generation Failed" });
+    }
 });
 
 // 1. REGISTER
