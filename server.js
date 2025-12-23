@@ -69,7 +69,14 @@ const User = mongoose.models.User || mongoose.model('User', UserSchema);
 const ContactSchema = new mongoose.Schema({ name: String, email: String, message: String, date: { type: Date, default: Date.now } });
 const Contact = mongoose.models.Contact || mongoose.model('Contact', ContactSchema);
 
-const BookingSchema = new mongoose.Schema({ studentEmail: String, mentorName: String, date: { type: Date, default: Date.now } });
+const BookingSchema = new mongoose.Schema({
+    studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    studentEmail: String,
+    mentorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    mentorName: String,
+    message: { type: String, default: '' },
+    date: { type: Date, default: Date.now }
+});
 const Booking = mongoose.models.Booking || mongoose.model('Booking', BookingSchema);
 
 const LectureSchema = new mongoose.Schema({
@@ -94,9 +101,14 @@ app.get('/', (req, res) => {
 });
 
 // 🎥 ZOOM SIGNATURE API
-// 🎥 ZOOM SIGNATURE API
-app.post('/api/generate-signature', (req, res) => {
+// 🎥 ZOOM SIGNATURE API (Secured 🔒)
+app.post('/api/generate-signature', verifyToken, (req, res) => {
     try {
+        // 1. Check if user is a Mentor
+        if (req.user.role !== 'mentor' && req.body.role === 1) {
+            return res.status(403).json({ success: false, message: "Unauthorized to Start Meeting" });
+        }
+
         if (!process.env.ZOOM_CLIENT_ID || !process.env.ZOOM_CLIENT_SECRET) {
             console.error("❌ Missing Zoom Env Vars");
             return res.status(500).json({ success: false, message: "Server Error: Zoom Keys Missing" });
@@ -138,7 +150,7 @@ app.post('/api/register', async (req, res) => {
         const newUser = new User({ username, email, password: hashedPassword, role: role || 'student', college, branch, image, about });
 
         await newUser.save();
-        const token = jwt.sign({ id: newUser._id }, JWT_SECRET);
+        const token = jwt.sign({ id: newUser._id, role: newUser.role }, JWT_SECRET); // ✅ Added role to token
         res.json({ success: true, message: "Registration Successful!", token, user: newUser });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
@@ -153,7 +165,7 @@ app.post('/api/login', async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({ success: false, message: "❌ Invalid Password!" });
 
-        const token = jwt.sign({ id: user._id }, JWT_SECRET);
+        const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET); // ✅ Added role to token
         res.json({ success: true, token, user: { ...user._doc }, message: "Login Successful!" });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
@@ -168,7 +180,7 @@ app.post('/api/google-login', async (req, res) => {
             user = new User({ username, email, password: hashedPassword, role: 'student', image: image || '' });
             await user.save();
         }
-        const token = jwt.sign({ id: user._id }, JWT_SECRET);
+        const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET); // ✅ Added role to token
         res.json({ success: true, token, user: { ...user._doc }, message: "Google Login Successful!" });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
@@ -225,23 +237,65 @@ app.get('/api/lectures/:mentorId', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, message: "Error fetching lectures" }); }
 });
 
-// 10. BOOKING
-app.post('/api/book', async (req, res) => {
+// 10. BOOKING (Updated)
+app.post('/api/book', verifyToken, async (req, res) => {
     try {
-        const { studentEmail, mentorName } = req.body;
-        const newBooking = new Booking({ studentEmail, mentorName });
+        const { mentorId, mentorName, date, message } = req.body;
+        const studentId = req.user.id;
+
+        // Find Student to get email/name if needed (optional)
+        const student = await User.findById(studentId);
+
+        const newBooking = new Booking({
+            studentEmail: student.email, // keeping for backward compatibility if needed
+            studentId,
+            mentorId,
+            mentorName,
+            message,
+            date: date || Date.now()
+        });
+
         await newBooking.save();
-        res.json({ success: true, message: "Booking Confirmed!" });
-    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
+        res.json({ success: true, message: "Booking Confirmed! Mentor will be notified." });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
 });
 
-// 11. CONTACT
+// 11. GET BOOKINGS FOR MENTOR
+app.get('/api/bookings/:mentorId', verifyToken, async (req, res) => {
+    try {
+        // Ensure the person asking is the mentor themselves
+        if (req.user.id !== req.params.mentorId && req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: "Unauthorized" });
+        }
+
+        const bookings = await Booking.find({ mentorId: req.params.mentorId }).sort({ date: -1 });
+        res.json({ success: true, bookings });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
+// 12. CONTACT
 app.post('/api/contact', async (req, res) => {
     try {
         const { name, email, message } = req.body;
         const newMessage = new Contact({ name, email, message });
         await newMessage.save();
         res.json({ success: true, message: "Saved to Database!" });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
+});
+
+app.get('/api/contact', verifyToken, async (req, res) => {
+    try {
+        // Optional: Check for admin role
+        // if (req.user.role !== 'admin') return res.status(403).json({ message: "Access Denied" });
+
+        const messages = await Contact.find().sort({ createdAt: -1 });
+        res.json({ success: true, messages });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
