@@ -24,8 +24,6 @@ app.use((req, res, next) => {
 app.use(cors({
     origin: [
         "http://localhost:5173",
-        "https://navigreat-frontend-98.vercel.app",
-        "https://24113011237-source.github.io",
         "https://navigreat.vercel.app"
     ],
     credentials: true
