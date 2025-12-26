@@ -25,7 +25,8 @@ app.use(cors({
     origin: [
         "http://localhost:5173",
         "https://navigreat.vercel.app",
-        "https://prabhatsingh9893.github.io"
+        "https://prabhatsingh9893.github.io",
+        "https://navigreat98.vercel.app"
     ],
     credentials: true
 }));
