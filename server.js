@@ -499,11 +499,17 @@ app.get('/api/contacts', verifyToken, async (req, res) => {
     }
 });
 
-// 14. GET MESSAGES (Chat History)
+// 14. GET MESSAGES (Chat History) & MARK READ
 app.get('/api/messages/:otherUserId', verifyToken, async (req, res) => {
     try {
         const myId = req.user.id;
         const otherId = req.params.otherUserId;
+
+        // Mark messages from otherId as READ
+        await Message.updateMany(
+            { sender: otherId, receiver: myId, read: false },
+            { $set: { read: true } }
+        );
 
         const messages = await Message.find({
             $or: [
