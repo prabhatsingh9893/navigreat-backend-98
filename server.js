@@ -5,9 +5,20 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sendEmail = require('./utils/sendEmail');
-const KJUR = require('jsrsasign'); // 🎥 Zoom ke liye
+const KJUR = require('jsrsasign');
+const http = require('http');
+const { Server } = require("socket.io");
+const Message = require('./models/Message');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: ["http://localhost:5173", "https://navigreat.vercel.app", "https://prabhatsingh9893.github.io", "https://navigreat98.vercel.app"],
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -346,6 +357,53 @@ app.get('/api/zoom/callback', (req, res) => {
 });
 
 // Server Start
-app.listen(PORT, () => {
+// 13. GET MESSAGES (Chat History)
+app.get('/api/messages/:otherUserId', verifyToken, async (req, res) => {
+    try {
+        const myId = req.user.id;
+        const otherId = req.params.otherUserId;
+
+        const messages = await Message.find({
+            $or: [
+                { sender: myId, receiver: otherId },
+                { sender: otherId, receiver: myId }
+            ]
+        }).sort({ timestamp: 1 });
+
+        res.json({ success: true, messages });
+    } catch (err) { res.status(500).json({ success: false, message: "Error fetching messages" }); }
+});
+
+// 🚀 SOCKET.IO LOGIC
+io.on("connection", (socket) => {
+    console.log(`⚡ Socket Connected: ${socket.id}`);
+
+    socket.on("join_room", (userId) => {
+        socket.join(userId);
+        console.log(`User joined room: ${userId}`);
+    });
+
+    socket.on("send_message", async (data) => {
+        try {
+            const { sender, receiver, content } = data;
+            const newMessage = new Message({ sender, receiver, content });
+            await newMessage.save();
+
+            // Send to Receiver
+            io.to(receiver).emit("receive_message", newMessage);
+            // Send back to Sender (optional, useful for confirmation)
+            io.to(sender).emit("receive_message", newMessage);
+        } catch (err) {
+            console.error("Message Error:", err);
+        }
+    });
+
+    socket.on("disconnect", () => {
+        // console.log("User Disconnected", socket.id);
+    });
+});
+
+// Server Start
+server.listen(PORT, () => {
     console.log(`🚀 Server running on Port: ${PORT}`);
 });

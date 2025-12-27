@@ -17,7 +17,8 @@
     "jsonwebtoken": "^9.0.2",
     "jsrsasign": "^11.1.0",
     "mongoose": "^9.0.0",
-    "nodemailer": "^7.0.12"
+    "nodemailer": "^7.0.12",
+    "socket.io": "^4.8.3"
   },
   "devDependencies": {
     "gh-pages": "^6.3.0",
