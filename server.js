@@ -430,7 +430,44 @@ app.get('/api/zoom/callback', (req, res) => {
 });
 
 // Server Start
-// 13. GET MESSAGES (Chat History)
+// 13. GET CONTACTS (Chat Sidebar)
+app.get('/api/contacts', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // Find all messages where I am sender OR receiver
+        const messages = await Message.find({
+            $or: [{ sender: userId }, { receiver: userId }]
+        }).sort({ timestamp: -1 });
+
+        const contactIds = new Set();
+        messages.forEach(m => {
+            const s = m.sender.toString();
+            const r = m.receiver.toString();
+            if (s !== userId) contactIds.add(s);
+            if (r !== userId) contactIds.add(r);
+        });
+
+        // Also add Booking Students/Mentors!
+        // If I am Mentor, add my Students from bookings.
+        if (req.user.role === 'mentor') {
+            const bookings = await Booking.find({ mentorId: userId });
+            bookings.forEach(b => contactIds.add(b.studentId.toString()));
+        } else {
+            // If I am Student, add my Mentors from bookings
+            const bookings = await Booking.find({ studentId: userId });
+            bookings.forEach(b => contactIds.add(b.mentorId.toString()));
+        }
+
+        const contacts = await User.find({ _id: { $in: Array.from(contactIds) } }).select('username email image role');
+        res.json({ success: true, contacts });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, message: "Error fetching contacts" });
+    }
+});
+
+// 14. GET MESSAGES (Chat History)
 app.get('/api/messages/:otherUserId', verifyToken, async (req, res) => {
     try {
         const myId = req.user.id;
