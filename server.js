@@ -194,6 +194,47 @@ app.post('/api/login', async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
+// 2.5 FORGOT PASSWORD
+app.post('/api/auth/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        const resetToken = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '15m' });
+        const resetLink = `https://navigreat98.vercel.app/reset-password/${resetToken}`;
+
+        await sendEmail({
+            to: email,
+            subject: "Reset Password | Navigreat",
+            html: `<h3>Reset Password</h3><p>Click <a href="${resetLink}">here</a> to reset your password.</p><p>Or copy: ${resetLink}</p><p>Valid for 15 mins.</p>`
+        });
+
+        res.json({ success: true, message: "Reset link sent to email." });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ success: false, message: "Error processing request" });
+    }
+});
+
+// 2.6 RESET PASSWORD
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        const user = await User.findById(decoded.id);
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+
+        res.json({ success: true, message: "Password updated! Please login." });
+    } catch (e) {
+        res.status(400).json({ success: false, message: "Invalid or Expired Link" });
+    }
+});
+
 // 3. GOOGLE LOGIN
 app.post('/api/google-login', async (req, res) => {
     try {
