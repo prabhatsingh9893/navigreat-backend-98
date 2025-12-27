@@ -4,6 +4,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const sendEmail = require('./utils/sendEmail');
 const KJUR = require('jsrsasign'); // 🎥 Zoom ke liye
 
 const app = express();
@@ -258,7 +259,35 @@ app.post('/api/book', verifyToken, async (req, res) => {
         });
 
         await newBooking.save();
-        res.json({ success: true, message: "Booking Confirmed! Mentor will be notified." });
+
+        // --- SEND EMAILS ---
+        const mentor = await User.findById(mentorId);
+
+        // 1. To Mentor
+        if (mentor && mentor.email) {
+            await sendEmail({
+                to: mentor.email,
+                subject: "New Session Booking Request | Navigreat",
+                html: `<h3>Hello ${mentor.username},</h3>
+                <p>You have a new booking request from a student.</p>
+                <p><b>Student:</b> ${student.username} (${student.email})</p>
+                <p><b>Message:</b> ${message || "Interested in mentorship."}</p>
+                <p>Please check your dashboard to respond.</p>`
+            });
+        }
+
+        // 2. To Student
+        if (student && student.email) {
+            await sendEmail({
+                to: student.email,
+                subject: "Booking Request Sent! | Navigreat",
+                html: `<h3>Hello ${student.username},</h3>
+                <p>Your booking request for mentor <b>${mentorName}</b> has been sent successfully.</p>
+                <p>We will notify you once they confirm.</p>`
+            });
+        }
+
+        res.json({ success: true, message: "Booking Confirmed! Emails Sent." });
     } catch (error) {
         console.error(error);
         res.status(500).json({ success: false, message: "Server Error" });
