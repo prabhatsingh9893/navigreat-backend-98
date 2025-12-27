@@ -430,7 +430,7 @@ app.get('/api/zoom/callback', (req, res) => {
 });
 
 // Server Start
-// 13. GET CONTACTS (Chat Sidebar)
+// 13. GET CONTACTS (Chat Sidebar with Metadata)
 app.get('/api/contacts', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
@@ -448,19 +448,51 @@ app.get('/api/contacts', verifyToken, async (req, res) => {
             if (r !== userId) contactIds.add(r);
         });
 
-        // Also add Booking Students/Mentors!
-        // If I am Mentor, add my Students from bookings.
+        // Add Booking Contacts
         if (req.user.role === 'mentor') {
             const bookings = await Booking.find({ mentorId: userId });
             bookings.forEach(b => contactIds.add(b.studentId.toString()));
         } else {
-            // If I am Student, add my Mentors from bookings
             const bookings = await Booking.find({ studentId: userId });
             bookings.forEach(b => contactIds.add(b.mentorId.toString()));
         }
 
-        const contacts = await User.find({ _id: { $in: Array.from(contactIds) } }).select('username email image role');
-        res.json({ success: true, contacts });
+        const contactsData = [];
+        for (const contactId of contactIds) {
+            const user = await User.findById(contactId).select('username email image role college branch');
+            if (!user) continue;
+
+            const lastMsg = await Message.findOne({
+                $or: [
+                    { sender: userId, receiver: contactId },
+                    { sender: contactId, receiver: userId }
+                ]
+            }).sort({ timestamp: -1 });
+
+            // Count Unread (Where Sender = Contact, Receiver = Me, Read = False)
+            const unreadCount = await Message.countDocuments({
+                sender: contactId,
+                receiver: userId,
+                read: false
+            });
+
+            contactsData.push({
+                _id: user._id,
+                username: user.username,
+                image: user.image,
+                role: user.role,
+                college: user.college,
+                branch: user.branch,
+                lastMessage: lastMsg ? lastMsg.content : "",
+                lastMessageTime: lastMsg ? lastMsg.timestamp : null,
+                unreadCount
+            });
+        }
+
+        // Sort by last message time
+        contactsData.sort((a, b) => new Date(b.lastMessageTime || 0) - new Date(a.lastMessageTime || 0));
+
+        res.json({ success: true, contacts: contactsData });
     } catch (e) {
         console.error(e);
         res.status(500).json({ success: false, message: "Error fetching contacts" });
