@@ -372,6 +372,28 @@ app.get('/api/bookings/:mentorId', verifyToken, async (req, res) => {
     }
 });
 
+// 11. GET BOOKINGS (Smart)
+app.get('/api/my-bookings', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const role = req.user.role || 'student';
+
+        let query = {};
+        if (role === 'mentor') {
+            query = { mentorId: userId };
+        } else {
+            // For students
+            query = { studentId: userId };
+        }
+
+        const bookings = await Booking.find(query).sort({ date: -1 });
+        res.json({ success: true, bookings, role });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
 // 12. CONTACT
 app.post('/api/contact', async (req, res) => {
     try {
