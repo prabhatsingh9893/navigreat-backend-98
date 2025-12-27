@@ -9,6 +9,7 @@ const KJUR = require('jsrsasign');
 const http = require('http');
 const { Server } = require("socket.io");
 const Message = require('./models/Message');
+const Review = require('./models/Review');
 const { body, validationResult } = require('express-validator'); // 🛡️ Validator
 
 const app = express();
@@ -520,6 +521,38 @@ app.get('/api/messages/:otherUserId', verifyToken, async (req, res) => {
 
         res.json({ success: true, messages });
     } catch (err) { res.status(500).json({ success: false, message: "Error fetching messages" }); }
+});
+
+// --- REVIEWS ---
+app.post('/api/reviews', verifyToken, async (req, res) => {
+    try {
+        const { mentorId, rating, comment } = req.body;
+        const studentId = req.user.id;
+        const studentName = req.user.username;
+
+        const review = new Review({
+            mentorId,
+            studentId,
+            studentName,
+            rating,
+            comment
+        });
+
+        await review.save();
+        res.status(201).json({ success: true, message: "Thank you for your feedback!" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
+app.get('/api/reviews/:mentorId', async (req, res) => {
+    try {
+        const reviews = await Review.find({ mentorId: req.params.mentorId }).sort({ timestamp: -1 });
+        res.json({ success: true, reviews });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
 });
 
 // 🚀 SOCKET.IO LOGIC
