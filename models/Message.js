@@ -8,4 +8,7 @@ const MessageSchema = new mongoose.Schema({
     read: { type: Boolean, default: false }
 });
 
+// 🚀 Performance Index
+MessageSchema.index({ sender: 1, receiver: 1, timestamp: 1 });
+
 module.exports = mongoose.model('Message', MessageSchema);
