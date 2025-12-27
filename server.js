@@ -9,6 +9,7 @@ const KJUR = require('jsrsasign');
 const http = require('http');
 const { Server } = require("socket.io");
 const Message = require('./models/Message');
+const { body, validationResult } = require('express-validator'); // 🛡️ Validator
 
 const app = express();
 const server = http.createServer(app);
@@ -153,8 +154,17 @@ app.post('/api/generate-signature', verifyToken, (req, res) => {
     }
 });
 
-// 1. REGISTER
-app.post('/api/register', async (req, res) => {
+// 1. REGISTER USER
+app.post('/api/auth/register', [
+    body('email').isEmail().withMessage("Invalid Email Format"),
+    body('password').isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+    body('username').notEmpty().withMessage("Username is required")
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ success: false, message: errors.array()[0].msg });
+    }
+
     try {
         const { username, email, password, role, college, branch, image, about } = req.body;
         const existingUser = await User.findOne({ email });
@@ -397,6 +407,10 @@ io.on("connection", (socket) => {
             console.error("Message Error:", err);
         }
     });
+
+    // ⌨️ Typing Indicators
+    socket.on("typing", (room) => socket.in(room).emit("display_typing"));
+    socket.on("stop_typing", (room) => socket.in(room).emit("hide_typing"));
 
     socket.on("disconnect", () => {
         // console.log("User Disconnected", socket.id);
