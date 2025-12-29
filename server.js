@@ -11,6 +11,7 @@ const { Server } = require("socket.io");
 const Message = require('./models/Message');
 const Review = require('./models/Review');
 const { body, validationResult } = require('express-validator'); // 🛡️ Validator
+const { cacheMiddleware } = require('./middleware/cache'); // ⚡ Caching Middleware
 
 const app = express();
 const server = http.createServer(app);
@@ -252,7 +253,7 @@ app.post('/api/google-login', async (req, res) => {
 });
 
 // 4. GET ALL MENTORS
-app.get('/api/mentors', async (req, res) => {
+app.get('/api/mentors', cacheMiddleware(300), async (req, res) => {
     try {
         const mentors = await User.find({ role: 'mentor' }).select('-password');
         res.json({ success: true, mentors });
@@ -260,7 +261,7 @@ app.get('/api/mentors', async (req, res) => {
 });
 
 // 5. GET SINGLE MENTOR
-app.get('/api/mentors/:id', async (req, res) => {
+app.get('/api/mentors/:id', cacheMiddleware(180), async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid ID" });
         const mentor = await User.findById(req.params.id).select('-password');
@@ -296,7 +297,7 @@ app.delete('/api/lectures/:id', verifyToken, async (req, res) => {
 });
 
 // 9. GET LECTURES
-app.get('/api/lectures/:mentorId', async (req, res) => {
+app.get('/api/lectures/:mentorId', cacheMiddleware(300), async (req, res) => {
     try {
         const lectures = await Lecture.find({ mentorId: req.params.mentorId });
         res.json({ success: true, lectures });
@@ -566,8 +567,14 @@ io.on("connection", (socket) => {
 
     socket.on("send_message", async (data) => {
         try {
-            const { sender, receiver, content } = data;
-            const newMessage = new Message({ sender, receiver, content });
+            const { sender, receiver, content, messageType, audioUrl } = data;
+            const newMessage = new Message({
+                sender,
+                receiver,
+                content: content || "",
+                messageType: messageType || 'text',
+                audioUrl: audioUrl || ""
+            });
             await newMessage.save();
 
             // Send to Receiver
