@@ -13,6 +13,11 @@ const Review = require('./models/Review');
 const { body, validationResult } = require('express-validator'); // 🛡️ Validator
 const { cacheMiddleware } = require('./middleware/cache'); // ⚡ Caching Middleware
 
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const mongoSanitize = require('mongo-sanitize');
+const xss = require('xss-clean');
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -24,13 +29,35 @@ const io = new Server(server, {
 });
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
+console.log("---------------------------------------------------");
+console.log("🚀 Server Starting...");
+console.log("---------------------------------------------------");
 
 // ================= IMPORTS =================
-// Note: Baki models inline hain, par Session humne alag file me rakha hai
 const Session = require('./models/Session');
 const sessionRoutes = require('./routes/sessions'); // 👈 Sessions Route Import
 
-// ================= MIDDLEWARE =================
+// ================= SECURITY & MIDDLEWARE =================
+app.use(helmet()); // 🛡️ Secure HTTP Headers
+
+// 🛡️ Rate Limiting (Prevent DDoS/Brute Force)
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+    message: "Too many requests from this IP, please try again after 15 minutes."
+});
+app.use(limiter);
+
+app.use(express.json({ limit: '50mb' })); // Increased limit for images
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// 🛡️ Data Sanitization
+app.use((req, res, next) => {
+    req.body = mongoSanitize(req.body); // Prevent NoSQL Injection
+    next();
+});
+app.use(xss()); // Prevent XSS Attacks
+
 app.use((req, res, next) => {
     console.log(`[REQUEST] ${req.method} ${req.url}`);
     next();
@@ -45,9 +72,6 @@ app.use(cors({
     ],
     credentials: true
 }));
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 🛡️ AUTH MIDDLEWARE (Suraksha Kavach)
 const verifyToken = (req, res, next) => {
@@ -131,19 +155,22 @@ app.post('/api/generate-signature', verifyToken, (req, res) => {
             return res.status(500).json({ success: false, message: "Server Error: Zoom Keys Missing" });
         }
 
-        const iat = Math.round(new Date().getTime() / 1000) - 30;
-        const exp = iat + 60 * 60 * 2; // 2 Hours
+        const iat = Math.round(new Date().getTime() / 1000) - 120; // 2 minutes drift allowance
+        const exp = iat + 86400; // 24 Hours validity (Fix for 3705)
 
         const oHeader = { alg: 'HS256', typ: 'JWT' };
         const oPayload = {
             sdkKey: process.env.ZOOM_CLIENT_ID,
-            mn: req.body.meetingNumber,
+            mn: parseInt(req.body.meetingNumber, 10), // ✅ Force Integer
             role: parseInt(req.body.role, 10),
             iat: iat,
             exp: exp,
             appKey: process.env.ZOOM_CLIENT_ID,
             tokenExp: exp
         };
+
+        console.log(`Generating Signature: IAT=${iat} (${new Date(iat * 1000).toISOString()}), EXP=${exp}`);
+        console.log("Payload:", JSON.stringify(oPayload, null, 2));
 
         const sHeader = JSON.stringify(oHeader);
         const sPayload = JSON.stringify(oPayload);
