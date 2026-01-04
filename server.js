@@ -141,6 +141,47 @@ app.get('/', (req, res) => {
     res.send(`NaviGreat Backend is Running! 🚀 | MongoDB Status: ${dbStatus}`);
 });
 
+// 14. CLOUDINARY UPLOAD API
+const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
+
+// Configure Cloudinary
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configure Multer (Memory Storage)
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
+app.post('/api/upload', verifyToken, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+
+        // Convert buffer to base64
+        const b64 = Buffer.from(req.file.buffer).toString('base64');
+        let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+
+        // Upload to Cloudinary
+        const result = await cloudinary.uploader.upload(dataURI, {
+            resource_type: "auto", // Auto-detect (image/video)
+            folder: "navigreat_uploads"
+        });
+
+        res.json({
+            success: true,
+            message: "Upload Successful!",
+            url: result.secure_url,
+            type: result.resource_type
+        });
+    } catch (error) {
+        console.error("Cloudinary Upload Error:", error);
+        res.status(500).json({ success: false, message: "Upload Failed" });
+    }
+});
+
 // 🎥 ZOOM SIGNATURE API
 // 🎥 ZOOM SIGNATURE API (Secured 🔒)
 app.post('/api/generate-signature', verifyToken, (req, res) => {
@@ -184,7 +225,8 @@ app.post('/api/generate-signature', verifyToken, (req, res) => {
 });
 
 // 1. REGISTER USER
-app.post('/api/auth/register', [
+// 1. REGISTER USER
+app.post('/api/auth/register', upload.single('image'), [
     body('email').isEmail().withMessage("Invalid Email Format"),
     body('password').isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
     body('username').notEmpty().withMessage("Username is required")
@@ -195,17 +237,46 @@ app.post('/api/auth/register', [
     }
 
     try {
-        const { username, email, password, role, college, branch, image, about } = req.body;
+        const { username, email, password, role, college, branch, about } = req.body;
+        let imageUrl = '';
+
+        // ☁️ Cloudinary Upload Logic
+        if (req.file) {
+            try {
+                const b64 = Buffer.from(req.file.buffer).toString('base64');
+                const dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+                const result = await cloudinary.uploader.upload(dataURI, {
+                    folder: "navigreat_avatars"
+                });
+                imageUrl = result.secure_url;
+            } catch (uploadError) {
+                console.error("Profile Image Upload Failed:", uploadError);
+                // Proceed without image or return error? Let's proceed but warn.
+            }
+        }
+
         const existingUser = await User.findOne({ email });
         if (existingUser) return res.status(400).json({ success: false, message: "❌ User already exists!" });
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const newUser = new User({ username, email, password: hashedPassword, role: role || 'student', college, branch, image, about });
+        const newUser = new User({
+            username,
+            email,
+            password: hashedPassword,
+            role: role || 'student',
+            college,
+            branch,
+            image: imageUrl || '',
+            about
+        });
 
         await newUser.save();
-        const token = jwt.sign({ id: newUser._id, role: newUser.role }, JWT_SECRET); // ✅ Added role to token
+        const token = jwt.sign({ id: newUser._id, role: newUser.role }, JWT_SECRET);
         res.json({ success: true, message: "Registration Successful!", token, user: newUser });
-    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
+    } catch (error) {
+        console.error("Register Error:", error);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
 });
 
 // 2. LOGIN
@@ -300,7 +371,16 @@ app.get('/api/mentors/:id', cacheMiddleware(180), async (req, res) => {
 // 6. UPDATE PROFILE (Protected 🔒)
 app.put('/api/mentors/:id', verifyToken, async (req, res) => {
     try {
-        const updatedUser = await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password');
+        // 🔒 SECURITY: Prevent Role/Password updates via this route
+        const { username, about, college, branch, image, meetingId, passcode } = req.body;
+
+        // Only allow these specific fields to be updated
+        const updateData = { username, about, college, branch, image, meetingId, passcode };
+
+        // Remove undefined fields (in case frontend didn't send them)
+        Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
+
+        const updatedUser = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
     } catch (error) { res.status(500).json({ success: false, message: "Update Failed" }); }
 });
