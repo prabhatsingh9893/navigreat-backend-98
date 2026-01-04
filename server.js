@@ -22,7 +22,14 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:5173", "https://navigreat.vercel.app", "https://prabhatsingh9893.github.io", "https://navigreat98.vercel.app"],
+        origin: [
+            "http://localhost:5173",
+            "https://navigreat.vercel.app",
+            "https://prabhatsingh9893.github.io",
+            "https://navigreat98.vercel.app",
+            "https://navigreat98.me",       // ✅ Custom Domain
+            "https://www.navigreat98.me"    // ✅ WWW Version
+        ],
         methods: ["GET", "POST"],
         credentials: true
     }
