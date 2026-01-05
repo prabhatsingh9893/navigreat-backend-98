@@ -37,7 +37,7 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
 console.log("---------------------------------------------------");
-console.log("🚀 Server Starting...");
+console.log("🚀 Server Starting... v2");
 console.log("---------------------------------------------------");
 
 // ================= IMPORTS =================
