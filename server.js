@@ -380,6 +380,11 @@ app.get('/api/mentors/:id', cacheMiddleware(180), async (req, res) => {
 // 6. UPDATE PROFILE (Protected 🔒)
 app.put('/api/mentors/:id', verifyToken, async (req, res) => {
     try {
+        // 🔒 SECURITY CHECK: Ensure user is updating their OWN profile
+        if (req.user.id !== req.params.id) {
+            return res.status(403).json({ success: false, message: "Unauthorized: You can only update your own profile" });
+        }
+
         // 🔒 SECURITY: Prevent Role/Password updates via this route
         const { username, about, college, branch, image, meetingId, passcode } = req.body;
 
