@@ -1,11 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const Session = require('../models/Session');
+const verifyToken = require('../middleware/auth'); // 🔒 Import Auth
 
-// ✅ 1. CREATE SESSION (Data dalne ke liye)
-router.post('/', async (req, res) => {
+// ✅ 1. CREATE SESSION (Secured 🔒)
+router.post('/', verifyToken, async (req, res) => {
     try {
         const { mentorId, title, startTime, endTime } = req.body;
+
+        // 🔒 SECURITY CHECK: Ensure user creates session for THEMSELVES
+        if (req.user.id !== mentorId) {
+            return res.status(403).json({ success: false, message: "Unauthorized: You can only create sessions for yourself" });
+        }
+
+        // 🔒 SECURITY CHECK: Ensure user is a Mentor
+        if (req.user.role !== 'mentor') {
+            return res.status(403).json({ success: false, message: "Unauthorized: Only mentors can create sessions" });
+        }
 
         const newSession = new Session({
             mentorId,
