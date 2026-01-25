@@ -106,13 +106,15 @@ const UserSchema = new mongoose.Schema({
     username: { type: String, required: true },
     email: { type: String, required: true, unique: true },
     password: { type: String, required: true },
-    role: { type: String, default: 'student', enum: ['student', 'mentor'] },
+    role: { type: String, default: 'student', enum: ['student', 'mentor', 'admin'] },
     college: { type: String, default: '' },
     branch: { type: String, default: '' },
     image: { type: String, default: '' },
     about: { type: String, default: '' },
     meetingId: { type: String, default: '' }, // ✅ Added for Zoom
-    passcode: { type: String, default: '' }   // ✅ Added for Zoom
+    passcode: { type: String, default: '' },   // ✅ Added for Zoom
+    isVerified: { type: Boolean, default: false }, // ✅ Verification Status
+    verificationStatus: { type: String, default: 'pending', enum: ['pending', 'verified', 'rejected'] }
 }, { timestamps: true });
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
@@ -276,7 +278,9 @@ app.post('/api/auth/register', upload.single('image'), [
             college,
             branch,
             image: imageUrl || '',
-            about
+            about,
+            isVerified: role === 'mentor' ? false : true, // Mentors need verification
+            verificationStatus: role === 'mentor' ? 'pending' : 'verified'
         });
 
         await newUser.save();
@@ -397,6 +401,38 @@ app.put('/api/mentors/:id', verifyToken, async (req, res) => {
         const updatedUser = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
     } catch (error) { res.status(500).json({ success: false, message: "Update Failed" }); }
+});
+
+// 6.5 ADMIN VERIFY USER
+app.put('/api/admin/verify/:id', verifyToken, async (req, res) => {
+    try {
+        // Check if requester is admin (or for now, strict check on specific email if no admin exists yet, but roles are better)
+        // Since we just added 'admin' role, we assume the user will manually update their role to admin in DB to use this.
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: "Admin Access Required" });
+        }
+
+        const { status } = req.body; // 'verified' or 'rejected'
+        const newStatus = status === 'verified';
+
+        const updatedUser = await User.findByIdAndUpdate(req.params.id, {
+            isVerified: newStatus,
+            verificationStatus: status
+        }, { new: true }).select('-password');
+
+        res.json({ success: true, message: `User ${status} successfully`, user: updatedUser });
+    } catch (error) { res.status(500).json({ success: false, message: "Verification Failed" }); }
+});
+
+// 6.6 ADMIN GET ALL USERS
+app.get('/api/admin/users', verifyToken, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            return res.status(403).json({ success: false, message: "Admin Access Required" });
+        }
+        const users = await User.find().select('-password').sort({ createdAt: -1 });
+        res.json({ success: true, users });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
 // 7. ADD LECTURE (Protected 🔒)
