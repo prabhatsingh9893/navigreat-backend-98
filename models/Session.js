@@ -5,7 +5,8 @@ const SessionSchema = new mongoose.Schema({
   title: { type: String, required: true },
   startTime: { type: Date, required: true },
   endTime: { type: Date, required: true },
-  meetingLink: { type: String } // Optional: Agar Zoom link future me save karna ho
+  meetingLink: { type: String }, // Optional: Agar Zoom link future me save karna ho
+  status: { type: String, enum: ['scheduled', 'completed', 'cancelled'], default: 'scheduled' }
 }, { timestamps: true });
 
 module.exports = mongoose.models.Session || mongoose.model('Session', SessionSchema);
