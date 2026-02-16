@@ -11,7 +11,7 @@ const { Server } = require("socket.io");
 const Message = require('./models/Message');
 const Review = require('./models/Review');
 const { body, validationResult } = require('express-validator'); // 🛡️ Validator
-const { cacheMiddleware } = require('./middleware/cache'); // ⚡ Caching Middleware
+const { cacheMiddleware, clearCache } = require('./middleware/cache'); // ⚡ Caching Middleware
 
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
@@ -399,6 +399,11 @@ app.put('/api/mentors/:id', verifyToken, async (req, res) => {
         Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
 
         const updatedUser = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
+
+        // 🧹 Clear Cache for this user
+        // The cache key is the URL path used for GET request
+        clearCache(`/api/mentors/${req.params.id}`);
+
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
     } catch (error) { res.status(500).json({ success: false, message: "Update Failed" }); }
 });
@@ -433,6 +438,17 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
         const users = await User.find().select('-password').sort({ createdAt: -1 });
         res.json({ success: true, users });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
+});
+
+// 🚧 DEV: SELF VERIFY (For Testing Only)
+app.put('/api/dev/verify-me', verifyToken, async (req, res) => {
+    try {
+        const user = await User.findByIdAndUpdate(req.user.id, {
+            isVerified: true,
+            verificationStatus: 'verified'
+        }, { new: true }).select('-password');
+        res.json({ success: true, message: "✅ You are now Verified!", user });
+    } catch (error) { res.status(500).json({ success: false, message: "Verification Failed" }); }
 });
 
 // 7. ADD LECTURE (Protected 🔒)
