@@ -730,14 +730,27 @@ app.get('/api/reviews/:mentorId', async (req, res) => {
 });
 
 // 🚀 SOCKET.IO LOGIC
+const onlineUsers = new Map(); // Track { userId: socketId }
+
 io.on("connection", (socket) => {
     console.log(`⚡ Socket Connected: ${socket.id}`);
 
-    socket.on("join_room", (userId) => {
-        socket.join(userId);
-        console.log(`User joined room: ${userId}`);
+    // 1️⃣ User Comes Online
+    socket.on("register_user", (userId) => {
+        if (!userId) return;
+        onlineUsers.set(userId, socket.id);
+        socket.join(userId); // Personal Room
+
+        console.log(`✅ User Online: ${userId} (${socket.id})`);
+
+        // Broadcast to everyone that this user is online
+        io.emit("user_online", userId);
+
+        // Send currently online users to THIS user
+        socket.emit("get_online_users", Array.from(onlineUsers.keys()));
     });
 
+    // 2️⃣ Sending Messages
     socket.on("send_message", async (data) => {
         try {
             const { sender, receiver, content, messageType, audioUrl } = data;
@@ -750,10 +763,13 @@ io.on("connection", (socket) => {
             });
             await newMessage.save();
 
-            // Send to Receiver
+            // Send to Receiver (Socket Room)
             io.to(receiver).emit("receive_message", newMessage);
-            // Send back to Sender (optional, useful for confirmation)
+
+            // Send back to Sender (for optimistic UI update confirmation)
             io.to(sender).emit("receive_message", newMessage);
+
+            // 🔔 Notification Logic (Optional: Push Notification trigger here)
         } catch (err) {
             console.error("Message Error:", err);
         }
@@ -763,8 +779,23 @@ io.on("connection", (socket) => {
     socket.on("typing", (room) => socket.in(room).emit("display_typing"));
     socket.on("stop_typing", (room) => socket.in(room).emit("hide_typing"));
 
+    // 3️⃣ User Disconnects
     socket.on("disconnect", () => {
-        // console.log("User Disconnected", socket.id);
+        let disconnectedUserId = null;
+
+        // Find userId by socketId
+        for (const [userId, socketId] of onlineUsers.entries()) {
+            if (socketId === socket.id) {
+                disconnectedUserId = userId;
+                onlineUsers.delete(userId);
+                break;
+            }
+        }
+
+        if (disconnectedUserId) {
+            console.log(`❌ User Offline: ${disconnectedUserId}`);
+            io.emit("user_offline", disconnectedUserId);
+        }
     });
 });
 
