@@ -36,6 +36,12 @@ const io = new Server(server, {
 });
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+    console.error("❌ CRITICAL SECURITY ERROR: JWT_SECRET environment variable is missing!");
+    process.exit(1);
+}
+
 console.log("---------------------------------------------------");
 console.log("🚀 Server Starting... v2");
 console.log("---------------------------------------------------");
@@ -60,7 +66,9 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 🛡️ Data Sanitization
 app.use((req, res, next) => {
-    req.body = mongoSanitize(req.body); // Prevent NoSQL Injection
+    req.body = mongoSanitize(req.body); // Prevent NoSQL Injection in Body
+    req.query = mongoSanitize(req.query); // Prevent NoSQL Injection in URL Queries
+    req.params = mongoSanitize(req.params); // Prevent NoSQL Injection in Path Parameters
     next();
 });
 app.use(xss()); // Prevent XSS Attacks
