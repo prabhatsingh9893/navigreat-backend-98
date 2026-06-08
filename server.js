@@ -243,6 +243,56 @@ app.post('/api/generate-signature', verifyToken, (req, res) => {
     }
 });
 
+// 🎥 GET LIVE SESSION ZOOM CREDENTIALS (Secured 🔒)
+app.get('/api/sessions/join/:mentorId', verifyToken, async (req, res) => {
+    try {
+        const { mentorId } = req.params;
+        const requesterId = req.user.id;
+        const requesterRole = req.user.role;
+
+        // Find the mentor
+        const mentor = await User.findById(mentorId);
+        if (!mentor || mentor.role !== 'mentor') {
+            return res.status(404).json({ success: false, message: "Mentor not found" });
+        }
+
+        // 1. If requester is the mentor themselves or an admin, allow immediately
+        if (requesterId === mentorId || requesterRole === 'admin') {
+            return res.json({
+                success: true,
+                meetingId: mentor.meetingId,
+                passcode: mentor.passcode
+            });
+        }
+
+        // 2. Otherwise, check if there is an active/live session scheduled right now
+        const now = new Date();
+        const startBuffer = 15 * 60 * 1000; // 15 minutes early allowance
+        const endBuffer = 60 * 60 * 1000; // 60 minutes overrun allowance
+
+        const activeSession = await Session.findOne({
+            mentorId: mentorId,
+            startTime: { $lte: new Date(now.getTime() + startBuffer) },
+            endTime: { $gte: new Date(now.getTime() - endBuffer) }
+        });
+
+        if (!activeSession) {
+            return res.status(403).json({ success: false, message: "No active live session found for this mentor at this time." });
+        }
+
+        // Return credentials
+        res.json({
+            success: true,
+            meetingId: mentor.meetingId,
+            passcode: mentor.passcode
+        });
+
+    } catch (err) {
+        console.error("Join Credentials Error:", err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
 // 1. REGISTER USER
 // 1. REGISTER USER
 app.post('/api/auth/register', upload.single('image'), [
@@ -374,7 +424,7 @@ app.post('/api/google-login', async (req, res) => {
 // 4. GET ALL MENTORS
 app.get('/api/mentors', cacheMiddleware(300), async (req, res) => {
     try {
-        const mentors = await User.find({ role: 'mentor' }).select('-password');
+        const mentors = await User.find({ role: 'mentor' }).select('-password -email -meetingId -passcode');
         res.json({ success: true, mentors });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
@@ -383,7 +433,28 @@ app.get('/api/mentors', cacheMiddleware(300), async (req, res) => {
 app.get('/api/mentors/:id', cacheMiddleware(180), async (req, res) => {
     try {
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) return res.status(400).json({ success: false, message: "Invalid ID" });
-        const mentor = await User.findById(req.params.id).select('-password');
+        
+        let selectFields = '-password';
+        
+        // Decrypt token to check if user is the owner or admin
+        const token = req.header('Authorization');
+        let isOwner = false;
+        if (token) {
+            try {
+                const verified = jwt.verify(token.replace("Bearer ", ""), JWT_SECRET);
+                if (verified && (verified.id === req.params.id || verified.role === 'admin')) {
+                    isOwner = true;
+                }
+            } catch (err) {
+                // Ignore token error, treat as guest
+            }
+        }
+        
+        if (!isOwner) {
+            selectFields = '-password -email -meetingId -passcode';
+        }
+
+        const mentor = await User.findById(req.params.id).select(selectFields);
         if (!mentor) return res.status(404).json({ success: false, message: "Mentor not found" });
         res.json({ success: true, mentor });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
