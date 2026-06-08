@@ -479,9 +479,9 @@ app.put('/api/mentors/:id', verifyToken, async (req, res) => {
 
         const updatedUser = await User.findByIdAndUpdate(req.params.id, updateData, { new: true }).select('-password');
 
-        // 🧹 Clear Cache for this user
-        // The cache key is the URL path used for GET request
+        // 🧹 Clear Cache for this user and the global mentors list
         clearCache(`/api/mentors/${req.params.id}`);
+        clearCache(`/api/mentors`);
 
         res.json({ success: true, message: "Profile Updated", mentor: updatedUser });
     } catch (error) { res.status(500).json({ success: false, message: "Update Failed" }); }
@@ -503,6 +503,10 @@ app.put('/api/admin/verify/:id', verifyToken, async (req, res) => {
             isVerified: newStatus,
             verificationStatus: status
         }, { new: true }).select('-password');
+
+        // 🧹 Clear Cache for this user and the global mentors list
+        clearCache(`/api/mentors/${req.params.id}`);
+        clearCache(`/api/mentors`);
 
         res.json({ success: true, message: `User ${status} successfully`, user: updatedUser });
     } catch (error) { res.status(500).json({ success: false, message: "Verification Failed" }); }
@@ -526,6 +530,11 @@ app.put('/api/dev/verify-me', verifyToken, async (req, res) => {
             isVerified: true,
             verificationStatus: 'verified'
         }, { new: true }).select('-password');
+
+        // 🧹 Clear Cache for this user and the global mentors list
+        clearCache(`/api/mentors/${req.user.id}`);
+        clearCache(`/api/mentors`);
+
         res.json({ success: true, message: "✅ You are now Verified!", user });
     } catch (error) { res.status(500).json({ success: false, message: "Verification Failed" }); }
 });
@@ -688,11 +697,12 @@ app.get('/api/zoom/callback', (req, res) => {
 app.get('/api/contacts', verifyToken, async (req, res) => {
     try {
         const userId = req.user.id;
+        const myId = new mongoose.Types.ObjectId(userId);
 
         // Find all messages where I am sender OR receiver
         const messages = await Message.find({
             $or: [{ sender: userId }, { receiver: userId }]
-        }).sort({ timestamp: -1 });
+        }).select('sender receiver');
 
         const contactIds = new Set();
         messages.forEach(m => {
@@ -704,44 +714,86 @@ app.get('/api/contacts', verifyToken, async (req, res) => {
 
         // Add Booking Contacts
         if (req.user.role === 'mentor') {
-            const bookings = await Booking.find({ mentorId: userId });
-            bookings.forEach(b => contactIds.add(b.studentId.toString()));
+            const bookings = await Booking.find({ mentorId: userId }).select('studentId');
+            bookings.forEach(b => {
+                if (b.studentId) contactIds.add(b.studentId.toString());
+            });
         } else {
-            const bookings = await Booking.find({ studentId: userId });
-            bookings.forEach(b => contactIds.add(b.mentorId.toString()));
-        }
-
-        const contactsData = [];
-        for (const contactId of contactIds) {
-            const user = await User.findById(contactId).select('username email image role college branch');
-            if (!user) continue;
-
-            const lastMsg = await Message.findOne({
-                $or: [
-                    { sender: userId, receiver: contactId },
-                    { sender: contactId, receiver: userId }
-                ]
-            }).sort({ timestamp: -1 });
-
-            // Count Unread (Where Sender = Contact, Receiver = Me, Read = False)
-            const unreadCount = await Message.countDocuments({
-                sender: contactId,
-                receiver: userId,
-                read: false
-            });
-
-            contactsData.push({
-                _id: user._id,
-                username: user.username,
-                image: user.image,
-                role: user.role,
-                college: user.college,
-                branch: user.branch,
-                lastMessage: lastMsg ? lastMsg.content : "",
-                lastMessageTime: lastMsg ? lastMsg.timestamp : null,
-                unreadCount
+            const bookings = await Booking.find({ studentId: userId }).select('mentorId');
+            bookings.forEach(b => {
+                if (b.mentorId) contactIds.add(b.mentorId.toString());
             });
         }
+
+        if (contactIds.size === 0) {
+            return res.json({ success: true, contacts: [] });
+        }
+
+        const contactObjectIdList = Array.from(contactIds).map(id => new mongoose.Types.ObjectId(id));
+
+        // Aggregate User to get user details, lastMessage, and unreadCount
+        const contactsData = await User.aggregate([
+            {
+                $match: {
+                    _id: { $in: contactObjectIdList }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'messages',
+                    let: { contactId: '$_id' },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $or: [
+                                        { $and: [{ $eq: ['$sender', myId] }, { $eq: ['$receiver', '$$contactId'] }] },
+                                        { $and: [{ $eq: ['$sender', '$$contactId'] }, { $eq: ['$receiver', myId] }] }
+                                    ]
+                                }
+                            }
+                        },
+                        { $sort: { timestamp: -1 } },
+                        { $limit: 1 }
+                    ],
+                    as: 'lastMessageDoc'
+                }
+            },
+            {
+                $lookup: {
+                    from: 'messages',
+                    let: { contactId: '$_id' },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [
+                                        { $eq: ['$sender', '$$contactId'] },
+                                        { $eq: ['$receiver', myId] },
+                                        { $eq: ['$read', false] }
+                                    ]
+                                }
+                            }
+                        },
+                        { $count: 'count' }
+                    ],
+                    as: 'unreadCountDoc'
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    username: 1,
+                    image: 1,
+                    role: 1,
+                    college: 1,
+                    branch: 1,
+                    lastMessage: { $ifNull: [{ $arrayElemAt: ['$lastMessageDoc.content', 0] }, ""] },
+                    lastMessageTime: { $ifNull: [{ $arrayElemAt: ['$lastMessageDoc.timestamp', 0] }, null] },
+                    unreadCount: { $ifNull: [{ $arrayElemAt: ['$unreadCountDoc.count', 0] }, 0] }
+                }
+            }
+        ]);
 
         // Sort by last message time
         contactsData.sort((a, b) => new Date(b.lastMessageTime || 0) - new Date(a.lastMessageTime || 0));
@@ -810,6 +862,64 @@ app.get('/api/reviews/:mentorId', async (req, res) => {
 
 // 🚀 SOCKET.IO LOGIC
 const onlineUsers = new Map(); // Track { userId: socketId }
+const emailTimeouts = new Map(); // Track { userId: setTimeoutId }
+
+// Function to send consolidated unread message alerts via email
+async function sendOfflineEmailAlert(receiverId) {
+    try {
+        // Find unread messages for the receiver
+        const unreadMessages = await Message.find({
+            receiver: receiverId,
+            read: false
+        }).sort({ timestamp: 1 });
+
+        if (unreadMessages.length === 0) return;
+
+        // Fetch user info for receiver
+        const receiverUser = await User.findById(receiverId);
+        if (!receiverUser || !receiverUser.email) return;
+
+        // Group messages by sender to build a clean email template
+        const senderIds = Array.from(new Set(unreadMessages.map(m => m.sender.toString())));
+        const senders = await User.find({ _id: { $in: senderIds } }).select('username');
+        const senderMap = new Map(senders.map(s => [s._id.toString(), s.username]));
+
+        const messageItemsHtml = unreadMessages.map(m => {
+            const senderName = senderMap.get(m.sender.toString()) || "Unknown User";
+            const timeStr = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            return `
+                <li style="margin-bottom: 12px; padding: 10px; background-color: #f8fafc; border-left: 4px solid #2563eb; list-style: none; border-radius: 4px;">
+                    <strong>${senderName}</strong> <span style="font-size: 11px; color: #64748b;">(${timeStr})</span>:
+                    <p style="margin: 4px 0 0 0; color: #334155;">${m.content || "[Audio Message]"}</p>
+                </li>
+            `;
+        }).join('');
+
+        const emailHtml = `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                <h2 style="color: #1e3a8a; margin-top: 0;">You have unread messages on NaviGreat!</h2>
+                <p>Hello <strong>${receiverUser.username}</strong>,</p>
+                <p>While you were offline, you received the following message(s):</p>
+                <ul style="padding: 0; margin: 20px 0;">
+                    ${messageItemsHtml}
+                </ul>
+                <div style="margin-top: 30px; text-align: center;">
+                    <a href="https://navigreat.vercel.app/#/chat" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">View Messages</a>
+                </div>
+                <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 30px 0 20px 0;" />
+                <p style="font-size: 12px; color: #94a3b8; text-align: center;">This is an automated notification from NaviGreat. You can safely ignore this email if you've already read these messages elsewhere.</p>
+            </div>
+        `;
+
+        await sendEmail({
+            to: receiverUser.email,
+            subject: `📧 You have ${unreadMessages.length} unread message(s) on NaviGreat`,
+            html: emailHtml
+        });
+    } catch (error) {
+        console.error("Error sending offline email alert:", error);
+    }
+}
 
 io.on("connection", (socket) => {
     console.log(`⚡ Socket Connected: ${socket.id}`);
@@ -821,6 +931,12 @@ io.on("connection", (socket) => {
         socket.join(userId); // Personal Room
 
         console.log(`✅ User Online: ${userId} (${socket.id})`);
+
+        // Cancel any pending offline email notification
+        if (emailTimeouts.has(userId)) {
+            clearTimeout(emailTimeouts.get(userId));
+            emailTimeouts.delete(userId);
+        }
 
         // Broadcast to everyone that this user is online
         io.emit("user_online", userId);
@@ -848,7 +964,16 @@ io.on("connection", (socket) => {
             // Send back to Sender (for optimistic UI update confirmation)
             io.to(sender).emit("receive_message", newMessage);
 
-            // 🔔 Notification Logic (Optional: Push Notification trigger here)
+            // Schedule offline email notification if receiver is offline
+            if (!onlineUsers.has(receiver)) {
+                if (!emailTimeouts.has(receiver)) {
+                    const timeoutId = setTimeout(() => {
+                        emailTimeouts.delete(receiver);
+                        sendOfflineEmailAlert(receiver);
+                    }, 10 * 60 * 1000); // 10 minutes
+                    emailTimeouts.set(receiver, timeoutId);
+                }
+            }
         } catch (err) {
             console.error("Message Error:", err);
         }
