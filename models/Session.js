@@ -9,4 +9,6 @@ const SessionSchema = new mongoose.Schema({
   status: { type: String, enum: ['scheduled', 'completed', 'cancelled'], default: 'scheduled' }
 }, { timestamps: true });
 
+SessionSchema.index({ mentorId: 1 });
+
 module.exports = mongoose.models.Session || mongoose.model('Session', SessionSchema);

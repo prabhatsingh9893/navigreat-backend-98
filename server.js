@@ -197,6 +197,8 @@ const BookingSchema = new mongoose.Schema({
     amount: { type: Number, default: 0 },
     paymentId: { type: String, default: '' } // Paytm txn ID
 }, { timestamps: true });
+BookingSchema.index({ studentId: 1 });
+BookingSchema.index({ mentorId: 1 });
 const Booking = mongoose.models.Booking || mongoose.model('Booking', BookingSchema);
 
 const LectureSchema = new mongoose.Schema({
@@ -205,6 +207,7 @@ const LectureSchema = new mongoose.Schema({
     url: { type: String, required: true },
     createdAt: { type: Date, default: Date.now }
 });
+LectureSchema.index({ mentorId: 1 });
 const Lecture = mongoose.models.Lecture || mongoose.model('Lecture', LectureSchema);
 
 

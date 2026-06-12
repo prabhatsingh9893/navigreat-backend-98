@@ -9,4 +9,7 @@ const ReviewSchema = new mongoose.Schema({
     timestamp: { type: Date, default: Date.now }
 });
 
+ReviewSchema.index({ mentorId: 1 });
+ReviewSchema.index({ studentId: 1 });
+
 module.exports = mongoose.model('Review', ReviewSchema);
