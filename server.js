@@ -49,6 +49,7 @@ console.log("---------------------------------------------------");
 // ================= IMPORTS =================
 const Session = require('./models/Session');
 const sessionRoutes = require('./routes/sessions'); // 👈 Sessions Route Import
+const paymentRoutes = require('./routes/payment'); // 💳 Paytm Payment Route Import
 
 // ================= SECURITY & MIDDLEWARE =================
 app.use(helmet()); // 🛡️ Secure HTTP Headers
@@ -109,6 +110,60 @@ mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("✅ MongoDB Connected Successfully!"))
     .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
+// ================= FIREBASE ADMIN SETUP =================
+let firebaseAdminEnabled = false;
+try {
+    const admin = require('firebase-admin');
+    const path = require('path');
+    const fs = require('fs');
+    const serviceAccountPath = path.join(__dirname, 'firebase-service-account.json');
+
+    if (fs.existsSync(serviceAccountPath)) {
+        const serviceAccount = require(serviceAccountPath);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        firebaseAdminEnabled = true;
+        console.log("✅ Firebase Admin SDK Initialized (Push Notifications Enabled)");
+    } else {
+        console.warn("⚠️ firebase-service-account.json missing. Push Notifications are disabled.");
+    }
+} catch (fbError) {
+    console.error("❌ Firebase Admin Initialization Failed:", fbError);
+}
+
+async function sendPushNotification(receiverId, senderName, messageText, messageType) {
+    if (!firebaseAdminEnabled) return;
+    try {
+        const admin = require('firebase-admin');
+        const receiver = await User.findById(receiverId);
+        if (!receiver || !receiver.fcmToken) return;
+
+        let notificationBody = messageText;
+        if (messageType === 'audio') {
+            notificationBody = "🎙️ Sent you a voice note";
+        } else if (messageType === 'file') {
+            notificationBody = "📄 Sent you a file";
+        }
+
+        const message = {
+            notification: {
+                title: `New message from ${senderName}`,
+                body: notificationBody || "Sent you a message"
+            },
+            data: {
+                senderId: String(receiverId)
+            },
+            token: receiver.fcmToken
+        };
+
+        await admin.messaging().send(message);
+        console.log(`✉️ Push notification sent to User ${receiverId}`);
+    } catch (error) {
+        console.error("❌ Error sending push notification:", error);
+    }
+}
+
 // ================= INLINE MODELS (Existing) =================
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true },
@@ -122,7 +177,9 @@ const UserSchema = new mongoose.Schema({
     meetingId: { type: String, default: '' }, // ✅ Added for Zoom
     passcode: { type: String, default: '' },   // ✅ Added for Zoom
     isVerified: { type: Boolean, default: false }, // ✅ Verification Status
-    verificationStatus: { type: String, default: 'pending', enum: ['pending', 'verified', 'rejected'] }
+    verificationStatus: { type: String, default: 'pending', enum: ['pending', 'verified', 'rejected'] },
+    sessionFee: { type: Number, default: 500 }, // 💳 Added for Paytm Session Fee
+    fcmToken: { type: String, default: '' } // 📲 Firebase Cloud Messaging Push Token
 }, { timestamps: true });
 const User = mongoose.models.User || mongoose.model('User', UserSchema);
 
@@ -135,8 +192,11 @@ const BookingSchema = new mongoose.Schema({
     mentorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     mentorName: String,
     message: { type: String, default: '' },
-    date: { type: Date, default: Date.now }
-});
+    date: { type: Date, default: Date.now },
+    status: { type: String, default: 'confirmed', enum: ['pending', 'confirmed', 'failed'] }, // 💳 Booking Status
+    amount: { type: Number, default: 0 },
+    paymentId: { type: String, default: '' } // Paytm txn ID
+}, { timestamps: true });
 const Booking = mongoose.models.Booking || mongoose.model('Booking', BookingSchema);
 
 const LectureSchema = new mongoose.Schema({
@@ -151,6 +211,7 @@ const Lecture = mongoose.models.Lecture || mongoose.model('Lecture', LectureSche
 // ================= ROUTES CONFIGURATION =================
 // 👇 Isse /api/sessions activate ho jayega (routes/sessions.js file use hogi)
 app.use('/api/sessions', sessionRoutes);
+app.use('/api/payment', paymentRoutes); // 💳 Paytm Payment Route Activation
 
 
 // ================= API ROUTES =================
@@ -539,6 +600,21 @@ app.put('/api/dev/verify-me', verifyToken, async (req, res) => {
     } catch (error) { res.status(500).json({ success: false, message: "Verification Failed" }); }
 });
 
+// 📲 SAVE FCM REGISTRATION TOKEN
+app.post('/api/users/save-fcm-token', verifyToken, async (req, res) => {
+    try {
+        const { fcmToken } = req.body;
+        if (!fcmToken) {
+            return res.status(400).json({ success: false, message: "FCM token is required" });
+        }
+        await User.findByIdAndUpdate(req.user.id, { fcmToken });
+        res.json({ success: true, message: "FCM token saved successfully" });
+    } catch (err) {
+        console.error("Save FCM Token Error:", err);
+        res.status(500).json({ success: false, message: "Server Error" });
+    }
+});
+
 // 7. ADD LECTURE (Protected 🔒)
 app.post('/api/lectures', verifyToken, async (req, res) => {
     try {
@@ -627,7 +703,7 @@ app.get('/api/bookings/:mentorId', verifyToken, async (req, res) => {
             return res.status(403).json({ success: false, message: "Unauthorized" });
         }
 
-        const bookings = await Booking.find({ mentorId: req.params.mentorId }).sort({ date: -1 });
+        const bookings = await Booking.find({ mentorId: req.params.mentorId, status: 'confirmed' }).sort({ date: -1 });
         res.json({ success: true, bookings });
     } catch (err) {
         console.error(err);
@@ -643,7 +719,7 @@ app.get('/api/my-bookings', verifyToken, async (req, res) => {
 
         let query = {};
         if (role === 'mentor') {
-            query = { mentorId: userId };
+            query = { mentorId: userId, status: 'confirmed' };
         } else {
             // For students
             query = { studentId: userId };
@@ -966,6 +1042,11 @@ io.on("connection", (socket) => {
 
             // Schedule offline email notification if receiver is offline
             if (!onlineUsers.has(receiver)) {
+                // Send background push notification
+                const senderUser = await User.findById(sender);
+                const senderName = senderUser ? senderUser.username : "Someone";
+                sendPushNotification(receiver, senderName, content, messageType);
+
                 if (!emailTimeouts.has(receiver)) {
                     const timeoutId = setTimeout(() => {
                         emailTimeouts.delete(receiver);
