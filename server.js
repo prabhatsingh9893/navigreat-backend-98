@@ -884,6 +884,35 @@ app.get('/api/contacts', verifyToken, async (req, res) => {
     }
 });
 
+// 13.5 GET TOTAL UNREAD MESSAGES COUNT
+app.get('/api/messages/unread/count', verifyToken, async (req, res) => {
+    try {
+        const count = await Message.countDocuments({ receiver: req.user.id, read: false });
+        res.json({ success: true, count });
+    } catch (err) {
+        console.error("Error fetching unread count:", err);
+        res.status(500).json({ success: false, message: "Error fetching unread count" });
+    }
+});
+
+// 13.6 MARK MESSAGES FROM SENDER AS READ
+app.put('/api/messages/:senderId/read', verifyToken, async (req, res) => {
+    try {
+        const myId = req.user.id;
+        const senderId = req.params.senderId;
+
+        await Message.updateMany(
+            { sender: senderId, receiver: myId, read: false },
+            { $set: { read: true } }
+        );
+
+        res.json({ success: true, message: "Messages marked as read" });
+    } catch (err) {
+        console.error("Error marking messages as read:", err);
+        res.status(500).json({ success: false, message: "Error marking messages as read" });
+    }
+});
+
 // 14. GET MESSAGES (Chat History) & MARK READ
 app.get('/api/messages/:otherUserId', verifyToken, async (req, res) => {
     try {
