@@ -54,13 +54,21 @@ const paymentRoutes = require('./routes/payment'); // 💳 Paytm Payment Route I
 // ================= SECURITY & MIDDLEWARE =================
 app.use(helmet()); // 🛡️ Secure HTTP Headers
 
-// 🛡️ Rate Limiting (Prevent DDoS/Brute Force)
-const limiter = rateLimit({
+// 🛡️ General API Rate Limiting (Prevent DDoS/Brute Force)
+const generalLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limit each IP to 100 requests per windowMs
+    max: 1000, // limit each IP to 1000 requests per windowMs
     message: "Too many requests from this IP, please try again after 15 minutes."
 });
-app.use(limiter);
+app.use(generalLimiter);
+
+// 🛡️ Stricter Auth Rate Limiting (Prevent Login/Register/Reset Brute Force)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 20, // limit each IP to 20 auth requests per windowMs
+    message: "Too many authentication attempts, please try again after 15 minutes."
+});
+
 
 app.use(express.json({ limit: '50mb' })); // Increased limit for images
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
@@ -359,7 +367,7 @@ app.get('/api/sessions/join/:mentorId', verifyToken, async (req, res) => {
 
 // 1. REGISTER USER
 // 1. REGISTER USER
-app.post('/api/auth/register', upload.single('image'), [
+app.post('/api/auth/register', authLimiter, upload.single('image'), [
     body('email').isEmail().withMessage("Invalid Email Format"),
     body('password').isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
     body('username').notEmpty().withMessage("Username is required")
@@ -415,7 +423,7 @@ app.post('/api/auth/register', upload.single('image'), [
 });
 
 // 2. LOGIN
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authLimiter, async (req, res) => {
     try {
         const { email, password } = req.body;
         const user = await User.findOne({ email });
@@ -430,7 +438,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // 2.5 FORGOT PASSWORD
-app.post('/api/auth/forgot-password', async (req, res) => {
+app.post('/api/auth/forgot-password', authLimiter, async (req, res) => {
     try {
         const { email } = req.body;
         const user = await User.findOne({ email });
@@ -453,7 +461,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 });
 
 // 2.6 RESET PASSWORD
-app.post('/api/auth/reset-password', async (req, res) => {
+app.post('/api/auth/reset-password', authLimiter, async (req, res) => {
     try {
         const { token, newPassword } = req.body;
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -471,7 +479,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 // 3. GOOGLE LOGIN
-app.post('/api/google-login', async (req, res) => {
+app.post('/api/google-login', authLimiter, async (req, res) => {
     try {
         const { username, email, image } = req.body;
         let user = await User.findOne({ email });
