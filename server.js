@@ -969,7 +969,7 @@ app.get('/api/reviews/:mentorId', async (req, res) => {
 });
 
 // 🚀 SOCKET.IO LOGIC
-const onlineUsers = new Map(); // Track { userId: socketId }
+const onlineUsers = new Map(); // Track { userId: Set<socketId> } — multi-device aware
 const emailTimeouts = new Map(); // Track { userId: setTimeoutId }
 
 // Function to send consolidated unread message alerts via email
@@ -1029,16 +1029,22 @@ async function sendOfflineEmailAlert(receiverId) {
     }
 }
 
+// Helper: is a user currently connected on at least one socket?
+const isUserOnline = (userId) => onlineUsers.has(userId) && onlineUsers.get(userId).size > 0;
+
 io.on("connection", (socket) => {
     console.log(`⚡ Socket Connected: ${socket.id}`);
 
-    // 1️⃣ User Comes Online
+    // 1️⃣ User Comes Online — track a SET of sockets per user (multi-tab / multi-device)
     socket.on("register_user", (userId) => {
         if (!userId) return;
-        onlineUsers.set(userId, socket.id);
+        socket.userId = userId;
         socket.join(userId); // Personal Room
+        const wasOffline = !isUserOnline(userId);
+        if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
+        onlineUsers.get(userId).add(socket.id);
 
-        console.log(`✅ User Online: ${userId} (${socket.id})`);
+        console.log(`✅ User Online: ${userId} (${socket.id}) — ${onlineUsers.get(userId).size} socket(s)`);
 
         // Cancel any pending offline email notification
         if (emailTimeouts.has(userId)) {
@@ -1046,35 +1052,41 @@ io.on("connection", (socket) => {
             emailTimeouts.delete(userId);
         }
 
-        // Broadcast to everyone that this user is online
-        io.emit("user_online", userId);
+        // Only announce "online" on the user's FIRST socket
+        if (wasOffline) io.emit("user_online", userId);
 
         // Send currently online users to THIS user
         socket.emit("get_online_users", Array.from(onlineUsers.keys()));
     });
 
-    // 2️⃣ Sending Messages
-    socket.on("send_message", async (data) => {
+    // 2️⃣ Sending Messages — persists, then ACKs the sender for reliable delivery
+    socket.on("send_message", async (data, ack) => {
         try {
-            const { sender, receiver, content, messageType, audioUrl } = data;
+            const { sender, receiver, content, messageType, audioUrl, tempId } = data;
+            const receiverOnline = isUserOnline(receiver);
+
             const newMessage = new Message({
                 sender,
                 receiver,
                 content: content || "",
                 messageType: messageType || 'text',
-                audioUrl: audioUrl || ""
+                audioUrl: audioUrl || "",
+                delivered: receiverOnline, // delivered the moment a live receiver socket exists
             });
             await newMessage.save();
 
-            // Send to Receiver (Socket Room)
-            io.to(receiver).emit("receive_message", newMessage);
+            // Echo tempId so the sender can reconcile its optimistic bubble
+            const payload = { ...newMessage.toObject(), tempId };
 
-            // Send back to Sender (for optimistic UI update confirmation)
-            io.to(sender).emit("receive_message", newMessage);
+            // Deliver to the receiver's room AND the sender's other devices
+            io.to(receiver).emit("receive_message", payload);
+            io.to(sender).emit("receive_message", payload);
 
-            // Schedule offline email notification if receiver is offline
-            if (!onlineUsers.has(receiver)) {
-                // Send background push notification
+            // Reliable confirmation back to the sending socket
+            if (typeof ack === 'function') ack({ success: true, message: newMessage });
+
+            // Receiver offline → push notification + scheduled email
+            if (!receiverOnline) {
                 const senderUser = await User.findById(sender);
                 const senderName = senderUser ? senderUser.username : "Someone";
                 sendPushNotification(receiver, senderName, content, messageType);
@@ -1089,6 +1101,32 @@ io.on("connection", (socket) => {
             }
         } catch (err) {
             console.error("Message Error:", err);
+            if (typeof ack === 'function') ack({ success: false, error: err.message });
+        }
+    });
+
+    // 2.5 Delivery receipt — receiver's client confirms it received a message
+    socket.on("message_delivered", async ({ messageId, senderId }) => {
+        try {
+            if (!messageId) return;
+            await Message.findByIdAndUpdate(messageId, { delivered: true });
+            if (senderId) io.to(senderId).emit("message_status", { messageId, status: 'delivered' });
+        } catch (err) {
+            console.error("Delivered receipt error:", err);
+        }
+    });
+
+    // 2.6 Read receipt — reader opened the conversation; tell the original sender live
+    socket.on("mark_read", async ({ senderId, readerId }) => {
+        try {
+            if (!senderId || !readerId) return;
+            await Message.updateMany(
+                { sender: senderId, receiver: readerId, read: false },
+                { $set: { read: true, delivered: true } }
+            );
+            io.to(senderId).emit("message_status", { status: 'read', by: readerId });
+        } catch (err) {
+            console.error("Read receipt error:", err);
         }
     });
 
@@ -1096,22 +1134,17 @@ io.on("connection", (socket) => {
     socket.on("typing", (room) => socket.in(room).emit("display_typing"));
     socket.on("stop_typing", (room) => socket.in(room).emit("hide_typing"));
 
-    // 3️⃣ User Disconnects
+    // 3️⃣ User Disconnects — only mark offline when their LAST socket drops
     socket.on("disconnect", () => {
-        let disconnectedUserId = null;
-
-        // Find userId by socketId
-        for (const [userId, socketId] of onlineUsers.entries()) {
-            if (socketId === socket.id) {
-                disconnectedUserId = userId;
+        const userId = socket.userId;
+        if (userId && onlineUsers.has(userId)) {
+            const set = onlineUsers.get(userId);
+            set.delete(socket.id);
+            if (set.size === 0) {
                 onlineUsers.delete(userId);
-                break;
+                io.emit("user_offline", userId);
+                console.log(`❌ User Offline: ${userId}`);
             }
-        }
-
-        if (disconnectedUserId) {
-            console.log(`❌ User Offline: ${disconnectedUserId}`);
-            io.emit("user_offline", disconnectedUserId);
         }
     });
 });
