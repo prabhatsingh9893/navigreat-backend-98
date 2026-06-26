@@ -35,5 +35,7 @@ const MessageSchema = new mongoose.Schema({
 
 // 🚀 Performance Index
 MessageSchema.index({ sender: 1, receiver: 1, timestamp: 1 });
+MessageSchema.index({ receiver: 1, read: 1, timestamp: 1 }); // Optimize offline unread message queries
 
 module.exports = mongoose.model('Message', MessageSchema);
+
