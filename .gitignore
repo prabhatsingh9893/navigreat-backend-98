@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 coverage/
 .vscode/
+
+# Firebase Admin credentials
+firebase-service-account.json
