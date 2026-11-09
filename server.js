@@ -597,6 +597,10 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
 
 // 🚧 DEV: SELF VERIFY (For Testing Only)
 app.put('/api/dev/verify-me', verifyToken, async (req, res) => {
+    // 🔒 Testing shortcut — disabled unless ALLOW_DEV_ROUTES=true (never set this in production)
+    if (process.env.ALLOW_DEV_ROUTES !== 'true') {
+        return res.status(404).json({ success: false, message: "Not found" });
+    }
     try {
         const user = await User.findByIdAndUpdate(req.user.id, {
             isVerified: true,

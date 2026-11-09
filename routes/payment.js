@@ -57,6 +57,13 @@ async function sendPaymentEmails(booking, amount) {
 // ================= API ENDPOINTS =================
 
 // 1. INITIATE TRANSACTION
+// Mock mode is only active when real Paytm credentials are missing or MOCK_PAYTM=true
+const isMockMode = () => {
+    const mid = process.env.PAYTM_MID;
+    const merchantKey = process.env.PAYTM_MERCHANT_KEY;
+    return !mid || !merchantKey || mid === 'YOUR_MID' || merchantKey === 'YOUR_KEY' || process.env.MOCK_PAYTM === 'true';
+};
+
 router.post('/initiate', verifyToken, async (req, res) => {
     try {
         const { mentorId, message } = req.body;
@@ -101,7 +108,7 @@ router.post('/initiate', verifyToken, async (req, res) => {
         // Check for mock mode
         const mid = process.env.PAYTM_MID;
         const merchantKey = process.env.PAYTM_MERCHANT_KEY;
-        const isMock = !mid || !merchantKey || mid === 'YOUR_MID' || merchantKey === 'YOUR_KEY' || process.env.MOCK_PAYTM === 'true';
+        const isMock = isMockMode();
 
         if (isMock) {
             console.log(`[PAYTM] Initiating transaction in MOCK MODE for order ${orderId}`);
@@ -253,6 +260,11 @@ router.post('/callback', async (req, res) => {
 // 3. MOCK CALLBACK (FRONTEND SIMULATOR)
 router.post('/mock-callback', verifyToken, async (req, res) => {
     try {
+        // 🔒 Mock payments are only allowed when the server runs in mock mode
+        if (!isMockMode()) {
+            return res.status(403).json({ success: false, message: "Mock payments are disabled" });
+        }
+
         const { orderId, status } = req.body;
         console.log(`[MOCK PAYTM CALLBACK] Order ID: ${orderId}, Status: ${status}`);
 
@@ -263,6 +275,11 @@ router.post('/mock-callback', verifyToken, async (req, res) => {
 
         if (transaction.studentId.toString() !== req.user.id) {
             return res.status(403).json({ success: false, message: "Unauthorized transaction update" });
+        }
+
+        // 🔒 A transaction can only be settled once
+        if (transaction.status !== 'PENDING') {
+            return res.status(409).json({ success: false, message: "Transaction already processed" });
         }
 
         const BookingModel = mongoose.model('Booking');
