@@ -496,8 +496,24 @@ app.post('/api/google-login', authLimiter, async (req, res) => {
 // 4. GET ALL MENTORS
 app.get('/api/mentors', cacheMiddleware(300), async (req, res) => {
     try {
-        const mentors = await User.find({ role: 'mentor' }).select('-password -email -meetingId -passcode');
+        const mentors = await User.find({ role: 'mentor' }).select('-password -email -meetingId -passcode -fcmToken');
         res.json({ success: true, mentors });
+    } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
+});
+
+// 4.1 PUBLIC PLATFORM STATS (real numbers for the homepage)
+app.get('/api/stats', cacheMiddleware(300), async (req, res) => {
+    try {
+        const [mentors, verifiedMentors, students, sessionsBooked, colleges] = await Promise.all([
+            User.countDocuments({ role: 'mentor' }),
+            User.countDocuments({ role: 'mentor', isVerified: true }),
+            User.countDocuments({ role: 'student' }),
+            Booking.countDocuments({ status: 'confirmed' }),
+            User.distinct('college', { role: 'mentor' })
+        ]);
+        // Normalise college names so "NIT Bhopal" and "Nit bhopal " count once
+        const campuses = new Set(colleges.filter(Boolean).map(c => c.toLowerCase().replace(/[^a-z]/g, ''))).size;
+        res.json({ success: true, stats: { mentors, verifiedMentors, students, sessionsBooked, campuses } });
     } catch (error) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
@@ -523,7 +539,7 @@ app.get('/api/mentors/:id', cacheMiddleware(180), async (req, res) => {
         }
         
         if (!isOwner) {
-            selectFields = '-password -email -meetingId -passcode';
+            selectFields = '-password -email -meetingId -passcode -fcmToken';
         }
 
         const mentor = await User.findById(req.params.id).select(selectFields);
